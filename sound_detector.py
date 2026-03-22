@@ -70,6 +70,7 @@ class SoundDetector:
 
         try:
             while not self._stop_event.is_set():
+                print("[DEBUG] capturing...", flush=True)
                 audio = self.audio_processor.capture_audio_chunk()
                 print(f"[DEBUG] audio={'None' if audio is None else len(audio)}", flush=True)
                 if audio is None:
