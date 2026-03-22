@@ -93,6 +93,14 @@ def create_app(sound_detector):
             return jsonify({"status": "stopped"})
         return jsonify({"error": "invalid action"}), 400
 
+    @app.route("/api/clear-log", methods=["POST"])
+    def api_clear_log():
+        try:
+            detector.logger.clear()
+            return jsonify({"status": "ok"})
+        except Exception as e:
+            return jsonify({"status": "error", "message": str(e)}), 500
+
     @app.route("/api/download")
     def api_download():
         csv_path = detector.logger.get_csv_path()
@@ -330,6 +338,31 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   .stat-value.running { color: var(--green); }
   .stat-value.stopped { color: var(--red); }
 
+  /* ── Pulse dot ──────────────────────────────────────── */
+  .pulse-dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-right: 8px;
+    vertical-align: middle;
+    flex-shrink: 0;
+  }
+  .pulse-dot.running {
+    background: var(--green);
+    box-shadow: 0 0 0 0 rgba(74,222,128,0.6);
+    animation: pulse 1.6s infinite;
+  }
+  .pulse-dot.stopped {
+    background: var(--red);
+    animation: none;
+  }
+  @keyframes pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(74,222,128,0.6); }
+    70%  { box-shadow: 0 0 0 8px rgba(74,222,128,0); }
+    100% { box-shadow: 0 0 0 0 rgba(74,222,128,0); }
+  }
+
   /* ── Buttons ────────────────────────────────────────── */
   .controls { display: flex; gap: 10px; flex-wrap: wrap; }
   button {
@@ -515,7 +548,10 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 <div class="header">
   <h1>Barkomatic <span class="header-badge">v2</span></h1>
   <div style="display:flex; align-items:center; gap:12px;">
-    <div id="header-status" style="font-size:0.8rem; color:var(--text-dim);">Connecting...</div>
+    <div style="display:flex; align-items:center; gap:6px;">
+      <span class="pulse-dot" id="header-dot"></span>
+      <span id="header-status" style="font-size:0.8rem; color:var(--text-dim);">Connecting...</span>
+    </div>
     <button onclick="toggleGuide()" style="background:var(--accent); color:#000; width:32px; height:32px; border-radius:50%; border:none; font-size:1rem; font-weight:700; cursor:pointer; display:flex; align-items:center; justify-content:center;" title="Help &amp; Guide">?</button>
   </div>
 </div>
@@ -646,7 +682,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     </div>
     <div style="margin-top:14px; display:flex; gap:10px;">
       <button class="btn-save" onclick="saveSettings()">Save All Settings</button>
-      <button class="btn-download" onclick="location.href='/api/download'">Download CSV</button>
+      <button class="btn-download" onclick="location.href='/api/download'">&#11015; Download CSV</button>
     </div>
   </div>
 
@@ -661,6 +697,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           <option value="100">Last 100</option>
           <option value="500">Last 500</option>
         </select>
+        <button class="btn-clear" onclick="clearLog()" style="padding:4px 12px; font-size:0.75rem;">&#128465; Clear Log</button>
         <span class="log-count" id="log-count"></span>
       </div>
     </div>
@@ -808,6 +845,8 @@ async function fetchStatus() {
     document.getElementById('uptime').textContent = d.uptime || '—';
     document.getElementById('header-status').textContent = d.running ? 'Listening for ' + d.sound_type : 'Stopped';
     document.getElementById('header-status').style.color = d.running ? 'var(--green)' : 'var(--red)';
+    const dot = document.getElementById('header-dot');
+    dot.className = 'pulse-dot ' + (d.running ? 'running' : 'stopped');
 
     if (d.last_detection) {
       const ld = d.last_detection;
@@ -942,6 +981,18 @@ function showToast(msg, type) {
   t.className = 'toast ' + type;
   t.style.display = 'block';
   setTimeout(() => t.style.display = 'none', 2500);
+}
+
+async function clearLog() {
+  if (!confirm('Clear all logged detections? This cannot be undone.')) return;
+  try {
+    await fetch('/api/clear-log', {method: 'POST'});
+    showToast('Log cleared', 'success');
+    fetchDetections();
+    fetchStatus();
+  } catch(e) {
+    showToast('Failed to clear log', 'error');
+  }
 }
 
 function toggleGuide() {

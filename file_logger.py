@@ -83,6 +83,17 @@ class FileLogger:
         """Return the path to the CSV file for download."""
         return self.csv_path
 
+    def clear(self):
+        """Clear all logged events (reset to header only)."""
+        try:
+            with open(self.csv_path, "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(self.HEADER)
+            print("[LOG] Log cleared")
+        except Exception as e:
+            print(f"[ERROR] Failed to clear log: {e}")
+            raise
+
     def get_count(self):
         """Return total number of logged events."""
         try:
