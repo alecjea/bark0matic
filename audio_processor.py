@@ -98,17 +98,37 @@ class AudioProcessor:
             numpy.ndarray: Audio samples as 1D array, or None on error
         """
         try:
-            # Use a timeout to prevent hanging if mic is unresponsive
-            timeout_sec = Config.BARK_DETECTION_CHUNK_SIZE + 10
-            audio = sd.rec(
-                self.chunk_size,
-                samplerate=self.sample_rate,
-                channels=self.channels,
-                dtype=Config.RPI_MICROPHONE_DTYPE,
-                device=self.device,
-                blocking=False,
-            )
-            sd.wait()
+            import subprocess
+            import io
+            import wave
+
+            duration = Config.BARK_DETECTION_CHUNK_SIZE
+            device = self.device if self.device and self.device != "auto" else "hw:2,0"
+
+            # Use arecord directly - more reliable on RPI than sounddevice
+            cmd = [
+                'arecord',
+                '-D', device,
+                '-f', 'S16_LE',
+                '-r', str(self.sample_rate),
+                '-c', '1',
+                '-d', str(int(duration)),
+                '-t', 'wav',
+                '-q',
+                '-'
+            ]
+            result = subprocess.run(cmd, capture_output=True, timeout=int(duration) + 5)
+
+            if result.returncode != 0:
+                print(f"[ERROR] arecord failed: {result.stderr.decode()}")
+                return None
+
+            # Parse WAV from stdout
+            wav_data = io.BytesIO(result.stdout)
+            with wave.open(wav_data, 'rb') as wf:
+                frames = wf.readframes(wf.getnframes())
+                audio = np.frombuffer(frames, dtype=np.int16)
+
             return audio.flatten()
         except Exception as e:
             print(f"[ERROR] Audio capture failed: {e}")
