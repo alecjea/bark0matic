@@ -30,32 +30,40 @@ Detect dog barks (or other sounds) on your Raspberry Pi using AI-powered audio c
 
 ## Quick Start
 
-**Clone the repo:**
+### On Fresh Raspberry Pi (Easiest)
+
+**One command to do everything:**
 ```bash
-git clone https://github.com/yourusername/barkomatic.git
-cd barkomatic
+curl -fsSL https://raw.githubusercontent.com/alecjea/bark0matic/main/install.sh | bash
 ```
 
-**Install dependencies:**
+Or download and run:
 ```bash
-pip install -r requirements.txt
-```
-
-**Run the app:**
-```bash
-python main.py
-```
-
-**Open dashboard:**
-```
-http://localhost:8080
-```
-
-**Optional: Automated setup on Raspberry Pi**
-```bash
+git clone https://github.com/alecjea/bark0matic.git
+cd bark0matic
 bash install.sh
 ```
-This sets up systemd service for auto-start on boot.
+
+This will:
+- ✅ Update system packages
+- ✅ Install Python 3
+- ✅ Configure UFW firewall (ports 22, 8080)
+- ✅ Install all dependencies
+- ✅ Setup systemd auto-start
+- ✅ Start the service
+
+Then open: `http://localhost:8080`
+
+### Manual Setup
+
+```bash
+git clone https://github.com/alecjea/bark0matic.git
+cd bark0matic
+pip install --break-system-packages -r requirements.txt
+python3 main.py
+```
+
+Open browser: `http://localhost:8080`
 
 ---
 
