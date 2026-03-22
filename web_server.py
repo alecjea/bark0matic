@@ -102,38 +102,43 @@ def create_app(sound_detector):
     def api_detect_microphone():
         """Detect available audio input devices."""
         try:
-            import sounddevice as sd
             import subprocess
 
             devices = []
 
-            # Try to detect via arecord (Linux)
+            # Detect via arecord (Linux) - gives card numbers
             try:
                 result = subprocess.run(['arecord', '-l'], capture_output=True, text=True, timeout=5)
                 if result.returncode == 0:
-                    lines = result.stdout.split('\n')
-                    for line in lines:
-                        if 'card' in line and ':' in line:
-                            devices.append(line.strip())
+                    import re
+                    for line in result.stdout.split('\n'):
+                        m = re.match(r'card (\d+):.*\[(.+?)\].*device (\d+):', line)
+                        if m:
+                            card, name, dev = m.group(1), m.group(2).strip(), m.group(3)
+                            devices.append({
+                                "id": f"hw:{card},{dev}",
+                                "name": name,
+                                "label": f"hw:{card},{dev} - {name}"
+                            })
             except:
                 pass
 
-            # Also try sounddevice library
-            try:
+            # Fallback: sounddevice library
+            if not devices:
+                import sounddevice as sd
                 sd_devices = sd.query_devices()
                 for i, device in enumerate(sd_devices):
                     if device['max_input_channels'] > 0:
-                        devices.append(f"Device {i}: {device['name']}")
-            except:
-                pass
-
-            # Remove duplicates
-            devices = list(dict.fromkeys(devices))
+                        devices.append({
+                            "id": device['name'],
+                            "name": device['name'],
+                            "label": f"{device['name']}"
+                        })
 
             return jsonify({
                 "status": "ok",
-                "devices": devices if devices else ["Default microphone"],
-                "count": len(devices) if devices else 1
+                "devices": devices,
+                "current": Config.RPI_MICROPHONE_DEVICE
             })
         except Exception as e:
             return jsonify({"status": "error", "message": str(e)}), 500
@@ -141,45 +146,53 @@ def create_app(sound_detector):
     @app.route("/api/test-microphone")
     def api_test_microphone():
         """Test microphone by recording 2 seconds of audio."""
+        device = request.args.get("device", Config.RPI_MICROPHONE_DEVICE)
         try:
             import sounddevice as sd
             import numpy as np
 
-            # Record 2 seconds at 44.1kHz
             SAMPLE_RATE = 44100
             DURATION = 2
 
-            print("🎤 Testing microphone...")
-            audio = sd.rec(int(SAMPLE_RATE * DURATION), samplerate=SAMPLE_RATE, channels=1, dtype=np.float32)
+            print(f"[MIC] Testing device: {device}")
+            audio = sd.rec(int(SAMPLE_RATE * DURATION), samplerate=SAMPLE_RATE,
+                          channels=1, dtype=np.float32, device=device)
             sd.wait(timeout=DURATION + 5)
 
-            # Analyze the audio
             rms_energy = np.sqrt(np.mean(audio**2))
             peak = np.max(np.abs(audio))
             db = 20 * np.log10(rms_energy + 1e-10)
 
-            # Check if we got meaningful audio
-            if rms_energy < 0.01:
+            if rms_energy < 0.001:
                 return jsonify({
-                    "status": "error",
-                    "message": "Microphone detected but no audio captured. Check connections.",
-                    "rms": float(rms_energy),
-                    "db": float(db)
+                    "status": "warning",
+                    "message": "Device found but very low audio. Check mic connection.",
+                    "db": round(float(db), 1)
                 })
 
             return jsonify({
                 "status": "ok",
-                "message": "Microphone working! Audio captured.",
-                "rms_energy": float(rms_energy),
-                "peak_level": float(peak),
-                "db": float(db),
-                "duration": DURATION
+                "message": f"Microphone working! {round(float(db), 1)}dB",
+                "db": round(float(db), 1),
+                "peak": round(float(peak * 100), 1)
             })
         except Exception as e:
             return jsonify({
                 "status": "error",
-                "message": f"Microphone test failed: {str(e)}"
+                "message": f"Test failed: {str(e)}"
             }), 500
+
+    @app.route("/api/save-microphone", methods=["POST"])
+    def api_save_microphone():
+        """Save selected microphone device."""
+        data = request.json
+        device = data.get("device")
+        if device:
+            Config.RPI_MICROPHONE_DEVICE = device
+            Config.save()
+            detector.reload_config()
+            return jsonify({"status": "ok", "device": device})
+        return jsonify({"status": "error", "message": "No device specified"}), 400
 
     return app
 
@@ -524,10 +537,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     <div class="controls">
       <button class="btn-start" onclick="control('start')">&#9654; Start</button>
       <button class="btn-stop" onclick="control('stop')">&#9632; Stop</button>
-      <button style="background:var(--orange); color:#000;" onclick="detectMicrophone()">🎤 Detect Microphone</button>
-      <button style="background:var(--blue); color:#000;" onclick="testMicrophone()">🔊 Test Microphone</button>
     </div>
-    <div id="mic-status" style="margin-top:12px; padding:12px; border-radius:8px; font-size:0.85rem; display:none;"></div>
   </div>
 
   <div class="grid-2">
@@ -544,6 +554,23 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       <p style="font-size:0.75rem; color:var(--text-dim); margin-top:10px;">
         Powered by Google YAMNet — 521 sound classes, runs locally on device.
       </p>
+    </div>
+
+    <!-- ── Microphone ────────────────────────────────────── -->
+    <div class="card">
+      <div class="card-header">
+        <h2>Microphone</h2>
+      </div>
+      <div class="field" style="margin-bottom:14px;">
+        <label>Audio Input Device</label>
+        <select id="mic_device"></select>
+      </div>
+      <div class="controls">
+        <button style="background:var(--orange); color:#000;" onclick="detectMics()">&#127908; Detect</button>
+        <button style="background:var(--blue); color:#000;" onclick="testMic()">&#128266; Test</button>
+        <button class="btn-save" onclick="saveMic()">&#128190; Save</button>
+      </div>
+      <div id="mic-result" style="margin-top:10px; padding:10px; border-radius:8px; font-size:0.85rem; display:none;"></div>
     </div>
 
     <!-- ── Sensitivity ─────────────────────────────────── -->
@@ -907,60 +934,97 @@ function toggleGuide() {
   g.style.display = g.style.display === 'none' ? 'block' : 'none';
 }
 
-async function detectMicrophone() {
-  const status = document.getElementById('mic-status');
-  status.style.display = 'block';
-  status.textContent = '🔄 Detecting microphone...';
-  status.style.background = 'var(--bg-dark)';
-  status.style.color = 'var(--text-dim)';
+async function detectMics() {
+  const r = document.getElementById('mic-result');
+  const sel = document.getElementById('mic_device');
+  r.style.display = 'block';
+  r.style.background = 'var(--bg-dark)';
+  r.style.color = 'var(--text-dim)';
+  r.textContent = 'Detecting microphones...';
 
   try {
     const res = await fetch('/api/detect-microphone');
     const data = await res.json();
 
-    if (data.status === 'ok') {
-      status.style.background = 'var(--green-bg)';
-      status.style.color = 'var(--green)';
-      status.textContent = `✓ ${data.count} microphone(s) detected`;
-      if (data.devices.length > 0) {
-        status.textContent += ': ' + data.devices.join(' | ');
-      }
+    if (data.status === 'ok' && data.devices.length > 0) {
+      sel.innerHTML = '';
+      data.devices.forEach(d => {
+        const opt = document.createElement('option');
+        opt.value = d.id;
+        opt.textContent = d.label;
+        if (d.id === data.current) opt.selected = true;
+        sel.appendChild(opt);
+      });
+      r.style.background = 'var(--green-bg)';
+      r.style.color = 'var(--green)';
+      r.textContent = data.devices.length + ' microphone(s) found';
     } else {
-      status.style.background = 'var(--red-bg)';
-      status.style.color = 'var(--red)';
-      status.textContent = '✗ No microphone detected';
+      r.style.background = 'var(--red-bg)';
+      r.style.color = 'var(--red)';
+      r.textContent = 'No microphones detected';
     }
   } catch (e) {
-    status.style.background = 'var(--red-bg)';
-    status.style.color = 'var(--red)';
-    status.textContent = '✗ Detection failed: ' + e.message;
+    r.style.background = 'var(--red-bg)';
+    r.style.color = 'var(--red)';
+    r.textContent = 'Detection failed: ' + e.message;
   }
 }
 
-async function testMicrophone() {
-  const status = document.getElementById('mic-status');
-  status.style.display = 'block';
-  status.textContent = '🎤 Testing microphone (recording 2 seconds)...';
-  status.style.background = 'var(--bg-dark)';
-  status.style.color = 'var(--text-dim)';
+async function testMic() {
+  const r = document.getElementById('mic-result');
+  const device = document.getElementById('mic_device').value;
+  r.style.display = 'block';
+  r.style.background = 'var(--bg-dark)';
+  r.style.color = 'var(--text-dim)';
+  r.textContent = 'Recording 2 seconds...';
 
   try {
-    const res = await fetch('/api/test-microphone');
+    const res = await fetch('/api/test-microphone?device=' + encodeURIComponent(device));
     const data = await res.json();
 
     if (data.status === 'ok') {
-      status.style.background = 'var(--green-bg)';
-      status.style.color = 'var(--green)';
-      status.textContent = `✓ Microphone working! Energy: ${data.db.toFixed(1)}dB, Peak: ${(data.peak_level*100).toFixed(1)}%`;
+      r.style.background = 'var(--green-bg)';
+      r.style.color = 'var(--green)';
+      r.textContent = `✓ Working! ${data.db}dB, Peak: ${data.peak}%`;
     } else {
-      status.style.background = 'var(--red-bg)';
-      status.style.color = 'var(--red)';
-      status.textContent = '✗ ' + data.message;
+      r.style.background = data.status === 'warning' ? 'rgba(251,146,60,0.1)' : 'var(--red-bg)';
+      r.style.color = data.status === 'warning' ? 'var(--orange)' : 'var(--red)';
+      r.textContent = data.message;
     }
   } catch (e) {
-    status.style.background = 'var(--red-bg)';
-    status.style.color = 'var(--red)';
-    status.textContent = '✗ Test failed: ' + e.message;
+    r.style.background = 'var(--red-bg)';
+    r.style.color = 'var(--red)';
+    r.textContent = 'Test failed: ' + e.message;
+  }
+}
+
+async function saveMic() {
+  const device = document.getElementById('mic_device').value;
+  const r = document.getElementById('mic-result');
+
+  try {
+    const res = await fetch('/api/save-microphone', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({device})
+    });
+    const data = await res.json();
+
+    r.style.display = 'block';
+    if (data.status === 'ok') {
+      r.style.background = 'var(--green-bg)';
+      r.style.color = 'var(--green)';
+      r.textContent = '✓ Saved! Using: ' + device;
+      showToast('Microphone saved: ' + device, 'success');
+    } else {
+      r.style.background = 'var(--red-bg)';
+      r.style.color = 'var(--red)';
+      r.textContent = 'Save failed: ' + data.message;
+    }
+  } catch (e) {
+    r.style.background = 'var(--red-bg)';
+    r.style.color = 'var(--red)';
+    r.textContent = 'Save failed: ' + e.message;
   }
 }
 
@@ -968,6 +1032,7 @@ async function testMicrophone() {
 loadSettings();
 fetchStatus();
 fetchDetections();
+detectMics();
 setInterval(fetchStatus, 3000);
 setInterval(fetchDetections, 5000);
 </script>
