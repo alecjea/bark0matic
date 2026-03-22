@@ -1,0 +1,975 @@
+"""Flask web interface for Barkomatic."""
+from flask import Flask, jsonify, request, send_file, render_template_string
+from config import Config
+
+# Will be set by main.py
+detector = None
+
+# Sound categories (mirrored from setup_allinone.sh for the web UI)
+SOUND_CATEGORIES = [
+    {"name": "Dog bark", "indices": [69, 70, 75]},
+    {"name": "Cat meow", "indices": [76, 78]},
+    {"name": "Bird song", "indices": [106, 107]},
+    {"name": "Siren (emergency vehicle)", "indices": [316, 317, 318, 319]},
+    {"name": "Smoke / fire alarm", "indices": [393, 394]},
+    {"name": "Glass breaking", "indices": [435]},
+    {"name": "Gunshot", "indices": [421]},
+    {"name": "Car horn / honking", "indices": [302, 312]},
+    {"name": "Crying / sobbing", "indices": [19, 20]},
+    {"name": "Screaming", "indices": [11]},
+    {"name": "Thunder", "indices": [281]},
+    {"name": "Knocking", "indices": [353]},
+    {"name": "Snoring", "indices": [38]},
+    {"name": "Coughing", "indices": [42]},
+    {"name": "Engine / motor", "indices": [337]},
+    {"name": "Loud engine revving", "indices": [337, 343, 347]},
+    {"name": "Alarm clock", "indices": [390]},
+    {"name": "Speech / talking", "indices": [0]},
+    {"name": "Music", "indices": [132, 249]},
+]
+
+
+def create_app(sound_detector):
+    """Create Flask app with reference to the detector."""
+    global detector
+    detector = sound_detector
+
+    app = Flask(__name__)
+
+    @app.route("/")
+    def dashboard():
+        return render_template_string(DASHBOARD_HTML)
+
+    @app.route("/api/status")
+    def api_status():
+        return jsonify(detector.get_status())
+
+    @app.route("/api/detections")
+    def api_detections():
+        count = request.args.get("count", 100, type=int)
+        rows = detector.logger.get_recent(count)
+        return jsonify(rows)
+
+    @app.route("/api/settings", methods=["GET"])
+    def api_get_settings():
+        data = Config.to_dict()
+        data["sound_categories"] = SOUND_CATEGORIES
+        return jsonify(data)
+
+    @app.route("/api/settings", methods=["POST"])
+    def api_save_settings():
+        data = request.json
+        if "threshold" in data:
+            Config.BARK_DETECTION_THRESHOLD = float(data["threshold"])
+        if "min_frequency" in data:
+            Config.BARK_DETECTION_MIN_FREQUENCY = float(data["min_frequency"])
+        if "max_frequency" in data:
+            Config.BARK_DETECTION_MAX_FREQUENCY = float(data["max_frequency"])
+        if "energy_threshold" in data:
+            Config.BARK_DETECTION_ENERGY_THRESHOLD = float(data["energy_threshold"])
+        if "chunk_size" in data:
+            Config.BARK_DETECTION_CHUNK_SIZE = float(data["chunk_size"])
+        if "sound_type_name" in data:
+            Config.SOUND_TYPE_NAME = data["sound_type_name"]
+            # Find matching indices
+            for cat in SOUND_CATEGORIES:
+                if cat["name"] == data["sound_type_name"]:
+                    Config.SOUND_TYPE_INDICES = cat["indices"]
+                    break
+
+        Config.save()
+        detector.reload_config()
+        return jsonify({"status": "ok"})
+
+    @app.route("/api/control", methods=["POST"])
+    def api_control():
+        data = request.json
+        action = data.get("action")
+        if action == "start":
+            detector.start()
+            return jsonify({"status": "started"})
+        elif action == "stop":
+            detector.stop()
+            return jsonify({"status": "stopped"})
+        return jsonify({"error": "invalid action"}), 400
+
+    @app.route("/api/download")
+    def api_download():
+        csv_path = detector.logger.get_csv_path()
+        return send_file(csv_path, as_attachment=True, download_name="detections.csv")
+
+    @app.route("/api/detect-microphone")
+    def api_detect_microphone():
+        """Detect available audio input devices."""
+        try:
+            import sounddevice as sd
+            import subprocess
+
+            devices = []
+
+            # Try to detect via arecord (Linux)
+            try:
+                result = subprocess.run(['arecord', '-l'], capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    lines = result.stdout.split('\n')
+                    for line in lines:
+                        if 'card' in line and ':' in line:
+                            devices.append(line.strip())
+            except:
+                pass
+
+            # Also try sounddevice library
+            try:
+                sd_devices = sd.query_devices()
+                for i, device in enumerate(sd_devices):
+                    if device['max_input_channels'] > 0:
+                        devices.append(f"Device {i}: {device['name']}")
+            except:
+                pass
+
+            # Remove duplicates
+            devices = list(dict.fromkeys(devices))
+
+            return jsonify({
+                "status": "ok",
+                "devices": devices if devices else ["Default microphone"],
+                "count": len(devices) if devices else 1
+            })
+        except Exception as e:
+            return jsonify({"status": "error", "message": str(e)}), 500
+
+    @app.route("/api/test-microphone")
+    def api_test_microphone():
+        """Test microphone by recording 2 seconds of audio."""
+        try:
+            import sounddevice as sd
+            import numpy as np
+
+            # Record 2 seconds at 44.1kHz
+            SAMPLE_RATE = 44100
+            DURATION = 2
+
+            print("🎤 Testing microphone...")
+            audio = sd.rec(int(SAMPLE_RATE * DURATION), samplerate=SAMPLE_RATE, channels=1, dtype=np.float32)
+            sd.wait(timeout=DURATION + 5)
+
+            # Analyze the audio
+            rms_energy = np.sqrt(np.mean(audio**2))
+            peak = np.max(np.abs(audio))
+            db = 20 * np.log10(rms_energy + 1e-10)
+
+            # Check if we got meaningful audio
+            if rms_energy < 0.01:
+                return jsonify({
+                    "status": "error",
+                    "message": "Microphone detected but no audio captured. Check connections.",
+                    "rms": float(rms_energy),
+                    "db": float(db)
+                })
+
+            return jsonify({
+                "status": "ok",
+                "message": "Microphone working! Audio captured.",
+                "rms_energy": float(rms_energy),
+                "peak_level": float(peak),
+                "db": float(db),
+                "duration": DURATION
+            })
+        except Exception as e:
+            return jsonify({
+                "status": "error",
+                "message": f"Microphone test failed: {str(e)}"
+            }), 500
+
+    return app
+
+
+DASHBOARD_HTML = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Barkomatic</title>
+<style>
+  :root {
+    --bg-dark: #0b1120;
+    --bg-card: #151d2e;
+    --bg-input: #0b1120;
+    --border: #1e2d45;
+    --border-focus: #38bdf8;
+    --text: #e2e8f0;
+    --text-dim: #64748b;
+    --text-label: #94a3b8;
+    --accent: #38bdf8;
+    --green: #4ade80;
+    --green-bg: rgba(74, 222, 128, 0.1);
+    --red: #f87171;
+    --red-bg: rgba(248, 113, 113, 0.1);
+    --blue: #60a5fa;
+    --purple: #a78bfa;
+    --orange: #fb923c;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg-dark);
+    color: var(--text);
+    min-height: 100vh;
+  }
+
+  /* ── Header ─────────────────────────────────────────── */
+  .header {
+    background: linear-gradient(135deg, #0f172a 0%, #1a1f3a 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 20px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .header h1 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--accent), var(--purple));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .header-badge {
+    font-size: 0.7rem;
+    background: var(--accent);
+    color: var(--bg-dark);
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-weight: 600;
+    -webkit-text-fill-color: var(--bg-dark);
+  }
+
+  /* ── Layout ─────────────────────────────────────────── */
+  .container { max-width: 1100px; margin: 0 auto; padding: 20px; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+  /* ── Cards ──────────────────────────────────────────── */
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+  }
+  .card-header h2 {
+    font-size: 0.85rem;
+    color: var(--text-label);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    font-weight: 600;
+  }
+
+  /* ── Status Bar ─────────────────────────────────────── */
+  .status-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .stat {
+    background: var(--bg-dark);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .stat-label {
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 6px;
+  }
+  .stat-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+  .stat-value.running { color: var(--green); }
+  .stat-value.stopped { color: var(--red); }
+
+  /* ── Buttons ────────────────────────────────────────── */
+  .controls { display: flex; gap: 10px; flex-wrap: wrap; }
+  button {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    font-weight: 600;
+    transition: all 0.15s;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  button:hover { transform: translateY(-1px); filter: brightness(1.1); }
+  button:active { transform: translateY(0); }
+  .btn-start { background: var(--green); color: #000; }
+  .btn-stop { background: var(--red); color: #fff; }
+  .btn-download { background: var(--blue); color: #000; }
+  .btn-save { background: var(--purple); color: #fff; }
+  .btn-clear { background: transparent; border: 1px solid var(--border); color: var(--text-dim); }
+
+  /* ── Form Fields ────────────────────────────────────── */
+  .settings-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    margin-bottom: 16px;
+  }
+  .field { display: flex; flex-direction: column; }
+  .field.full-width { grid-column: 1 / -1; }
+  .field label {
+    font-size: 0.75rem;
+    color: var(--text-label);
+    margin-bottom: 6px;
+    font-weight: 500;
+    letter-spacing: 0.3px;
+  }
+  .field input, .field select {
+    background: var(--bg-dark);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-family: inherit;
+    transition: border-color 0.15s;
+  }
+  .field input:focus, .field select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.1);
+  }
+  .field select {
+    -webkit-appearance: none;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%2394a3b8' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    padding-right: 36px;
+  }
+  .field select option { background: var(--bg-card); color: var(--text); }
+
+  /* ── Range Slider ───────────────────────────────────── */
+  .range-row { display: flex; align-items: center; gap: 12px; }
+  .range-row input[type=range] {
+    flex: 1;
+    -webkit-appearance: none;
+    background: transparent;
+    height: 6px;
+  }
+  .range-row input[type=range]::-webkit-slider-runnable-track {
+    height: 6px;
+    background: var(--border);
+    border-radius: 3px;
+  }
+  .range-row input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--accent);
+    margin-top: -6px;
+    cursor: pointer;
+  }
+  .range-val {
+    font-size: 0.85rem;
+    color: var(--accent);
+    font-weight: 600;
+    min-width: 48px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ── Detection Table ────────────────────────────────── */
+  .table-wrap {
+    overflow-x: auto;
+    max-height: 500px;
+    overflow-y: auto;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+  th {
+    text-align: left;
+    padding: 10px 12px;
+    color: var(--text-dim);
+    border-bottom: 1px solid var(--border);
+    font-weight: 600;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    position: sticky;
+    top: 0;
+    background: var(--bg-card);
+    z-index: 1;
+  }
+  td {
+    padding: 10px 12px;
+    border-bottom: 1px solid rgba(30, 45, 69, 0.5);
+    font-variant-numeric: tabular-nums;
+  }
+  tr:hover td { background: rgba(56, 189, 248, 0.03); }
+  .confidence-bar {
+    width: 60px;
+    height: 6px;
+    background: var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+    display: inline-block;
+    vertical-align: middle;
+    margin-right: 6px;
+  }
+  .confidence-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.3s;
+  }
+  .empty-state {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--text-dim);
+  }
+  .empty-state p { margin-top: 8px; font-size: 0.85rem; }
+
+  /* ── Log Viewer ─────────────────────────────────────── */
+  .log-controls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .log-count {
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    margin-left: auto;
+  }
+
+  /* ── Toast ──────────────────────────────────────────── */
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    padding: 14px 24px;
+    border-radius: 10px;
+    font-weight: 600;
+    font-size: 0.85rem;
+    display: none;
+    z-index: 100;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  }
+  .toast.success { background: var(--green); color: #000; }
+  .toast.error { background: var(--red); color: #fff; }
+
+  /* ── Responsive ─────────────────────────────────────── */
+  @media (max-width: 700px) {
+    .grid-2 { grid-template-columns: 1fr; }
+    .settings-grid { grid-template-columns: 1fr; }
+    .header { flex-direction: column; gap: 8px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Barkomatic <span class="header-badge">v2</span></h1>
+  <div style="display:flex; align-items:center; gap:12px;">
+    <div id="header-status" style="font-size:0.8rem; color:var(--text-dim);">Connecting...</div>
+    <button onclick="toggleGuide()" style="background:var(--accent); color:#000; width:32px; height:32px; border-radius:50%; border:none; font-size:1rem; font-weight:700; cursor:pointer; display:flex; align-items:center; justify-content:center;" title="Help &amp; Guide">?</button>
+  </div>
+</div>
+
+<div class="container">
+
+  <!-- ── Status ────────────────────────────────────────── -->
+  <div class="card">
+    <div class="card-header">
+      <h2>Status</h2>
+    </div>
+    <div class="status-grid">
+      <div class="stat">
+        <div class="stat-label">State</div>
+        <div class="stat-value" id="state">—</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Detecting</div>
+        <div class="stat-value" id="sound-type" style="font-size:1.1rem;">—</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Detections</div>
+        <div class="stat-value" id="count">0</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Uptime</div>
+        <div class="stat-value" id="uptime" style="font-size:1.1rem;">—</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Last Detection</div>
+        <div class="stat-value" id="last-detection" style="font-size:0.85rem;">—</div>
+      </div>
+    </div>
+    <div class="controls">
+      <button class="btn-start" onclick="control('start')">&#9654; Start</button>
+      <button class="btn-stop" onclick="control('stop')">&#9632; Stop</button>
+      <button style="background:var(--orange); color:#000;" onclick="detectMicrophone()">🎤 Detect Microphone</button>
+      <button style="background:var(--blue); color:#000;" onclick="testMicrophone()">🔊 Test Microphone</button>
+    </div>
+    <div id="mic-status" style="margin-top:12px; padding:12px; border-radius:8px; font-size:0.85rem; display:none;"></div>
+  </div>
+
+  <div class="grid-2">
+
+    <!-- ── Sound Type ──────────────────────────────────── -->
+    <div class="card">
+      <div class="card-header">
+        <h2>Sound Type</h2>
+      </div>
+      <div class="field">
+        <label>What sound to detect</label>
+        <select id="sound_type" onchange="soundTypeChanged()"></select>
+      </div>
+      <p style="font-size:0.75rem; color:var(--text-dim); margin-top:10px;">
+        Powered by Google YAMNet — 521 sound classes, runs locally on device.
+      </p>
+    </div>
+
+    <!-- ── Sensitivity ─────────────────────────────────── -->
+    <div class="card">
+      <div class="card-header">
+        <h2>Sensitivity</h2>
+      </div>
+      <div class="field" style="margin-bottom:14px;">
+        <label>Confidence Threshold</label>
+        <div class="range-row">
+          <input type="range" id="threshold" min="0.05" max="1" step="0.05"
+                 oninput="document.getElementById('threshold-val').textContent=this.value">
+          <span class="range-val" id="threshold-val">0.3</span>
+        </div>
+        <div style="display:flex; justify-content:space-between; font-size:0.65rem; color:var(--text-dim); margin-top:2px;">
+          <span>More sensitive</span><span>More accurate</span>
+        </div>
+      </div>
+      <div class="field">
+        <label>Energy Threshold (dB)</label>
+        <div class="range-row">
+          <input type="range" id="energy_threshold" min="-80" max="-10" step="5"
+                 oninput="document.getElementById('energy-val').textContent=this.value+'dB'">
+          <span class="range-val" id="energy-val">-60dB</span>
+        </div>
+        <div style="display:flex; justify-content:space-between; font-size:0.65rem; color:var(--text-dim); margin-top:2px;">
+          <span>Quieter sounds</span><span>Louder only</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Advanced Settings ─────────────────────────────── -->
+  <div class="card">
+    <div class="card-header">
+      <h2>Advanced Settings</h2>
+      <button class="btn-clear" onclick="toggleAdvanced()" id="adv-toggle" style="padding:6px 12px; font-size:0.75rem;">Show</button>
+    </div>
+    <div id="advanced-panel" style="display:none;">
+      <div class="settings-grid">
+        <div class="field">
+          <label>Min Frequency (Hz)</label>
+          <input type="number" id="min_frequency" step="50" min="0">
+        </div>
+        <div class="field">
+          <label>Max Frequency (Hz)</label>
+          <input type="number" id="max_frequency" step="100" min="0">
+        </div>
+        <div class="field">
+          <label>Chunk Size (seconds)</label>
+          <input type="number" id="chunk_size" step="0.5" min="0.5" max="10">
+        </div>
+        <div class="field">
+          <label>Microphone Device</label>
+          <input type="text" id="mic_device" disabled style="opacity:0.5;">
+        </div>
+      </div>
+    </div>
+    <div style="margin-top:14px; display:flex; gap:10px;">
+      <button class="btn-save" onclick="saveSettings()">Save All Settings</button>
+      <button class="btn-download" onclick="location.href='/api/download'">Download CSV</button>
+    </div>
+  </div>
+
+  <!-- ── Detections Log ────────────────────────────────── -->
+  <div class="card">
+    <div class="card-header">
+      <h2>Detection Log</h2>
+      <div class="log-controls">
+        <select id="log-limit" onchange="fetchDetections()" style="background:var(--bg-dark); border:1px solid var(--border); color:var(--text); padding:4px 8px; border-radius:6px; font-size:0.75rem;">
+          <option value="25">Last 25</option>
+          <option value="50" selected>Last 50</option>
+          <option value="100">Last 100</option>
+          <option value="500">Last 500</option>
+        </select>
+        <span class="log-count" id="log-count"></span>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Timestamp</th>
+            <th>Sound</th>
+            <th>Decibels</th>
+            <th>Frequency</th>
+            <th>Confidence</th>
+            <th>Duration</th>
+          </tr>
+        </thead>
+        <tbody id="detections"></tbody>
+      </table>
+      <div class="empty-state" id="empty-state">
+        <div style="font-size:2rem; margin-bottom:8px;">&#128266;</div>
+        <p>No detections yet. Listening...</p>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- ── Guide Overlay ──────────────────────────────────────────── -->
+<div id="guide-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:200; overflow-y:auto; padding:20px;">
+<div style="max-width:700px; margin:40px auto; background:var(--bg-card); border:1px solid var(--border); border-radius:16px; padding:32px; position:relative;">
+  <button onclick="toggleGuide()" style="position:absolute; top:16px; right:16px; background:none; border:none; color:var(--text-dim); font-size:1.5rem; cursor:pointer;">&times;</button>
+
+  <h2 style="font-size:1.4rem; color:var(--accent); margin-bottom:24px;">How to Use Barkomatic</h2>
+
+  <div class="guide-section">
+    <h3>What is Barkomatic?</h3>
+    <p>Barkomatic uses AI to listen for specific sounds through a microphone connected to your Raspberry Pi. When it detects the target sound (e.g. a dog barking), it logs the event with a timestamp, volume level, and confidence score. This data can be exported as a CSV file for use as evidence in noise complaints or other purposes.</p>
+  </div>
+
+  <div class="guide-section">
+    <h3>How Detection Works</h3>
+    <p>Barkomatic uses <strong>YAMNet</strong>, a Google AI model trained on over 2 million audio clips covering 521 different sounds. It runs entirely on your Raspberry Pi — no internet required after setup.</p>
+    <p>Every 2 seconds, the microphone captures audio. YAMNet analyses it and returns a <strong>confidence score</strong> (0 to 1) for each sound type. If the score exceeds your threshold, it's logged as a detection.</p>
+    <ul>
+      <li><strong>0.8 - 1.0</strong> — Very confident. Almost certainly the target sound.</li>
+      <li><strong>0.5 - 0.8</strong> — Likely the target sound, some uncertainty.</li>
+      <li><strong>0.2 - 0.5</strong> — Possible detection. May include similar sounds.</li>
+      <li><strong>Below 0.2</strong> — Probably not the target sound.</li>
+    </ul>
+  </div>
+
+  <div class="guide-section">
+    <h3>Understanding Settings</h3>
+    <table style="width:100%; font-size:0.85rem;">
+      <tr><td style="padding:8px; color:var(--accent); white-space:nowrap; vertical-align:top; font-weight:600;">Confidence Threshold</td>
+          <td style="padding:8px;">The minimum confidence score required to log a detection. Lower = more sensitive (catches more but may have false positives). Higher = more accurate (fewer detections but more reliable). <strong>Start at 0.3</strong> and adjust based on results.</td></tr>
+      <tr><td style="padding:8px; color:var(--accent); white-space:nowrap; vertical-align:top; font-weight:600;">Energy Threshold</td>
+          <td style="padding:8px;">Minimum volume (in decibels) to trigger detection. Set lower for distant sounds, higher to ignore quiet background noise. <strong>-60dB</strong> catches distant sounds; <strong>-30dB</strong> only catches loud nearby sounds.</td></tr>
+      <tr><td style="padding:8px; color:var(--accent); white-space:nowrap; vertical-align:top; font-weight:600;">Min/Max Frequency</td>
+          <td style="padding:8px;">Frequency range filter (in Hz). Useful for filtering by pitch — e.g. large dogs bark at lower frequencies (80-500Hz) than small dogs (500-2000Hz). Leave at 50-5000Hz to capture everything.</td></tr>
+      <tr><td style="padding:8px; color:var(--accent); white-space:nowrap; vertical-align:top; font-weight:600;">Chunk Size</td>
+          <td style="padding:8px;">How many seconds of audio to analyse at once. 2 seconds is the default. Longer chunks may improve accuracy but add delay.</td></tr>
+      <tr><td style="padding:8px; color:var(--accent); white-space:nowrap; vertical-align:top; font-weight:600;">Sound Type</td>
+          <td style="padding:8px;">What sound to listen for. Change this to detect different sounds — dog bark, cat meow, siren, glass breaking, etc. The AI model supports 18 categories.</td></tr>
+    </table>
+  </div>
+
+  <div class="guide-section">
+    <h3>Reading the Detection Log</h3>
+    <table style="width:100%; font-size:0.85rem;">
+      <tr><td style="padding:6px; color:var(--accent); font-weight:600;">Timestamp</td><td style="padding:6px;">When the sound was detected, in your local timezone.</td></tr>
+      <tr><td style="padding:6px; color:var(--accent); font-weight:600;">Sound</td><td style="padding:6px;">The type of sound detected (e.g. "Dog bark").</td></tr>
+      <tr><td style="padding:6px; color:var(--accent); font-weight:600;">Decibels</td><td style="padding:6px;">Volume level. Typical values: -20dB (loud), -40dB (moderate), -60dB (quiet).</td></tr>
+      <tr><td style="padding:6px; color:var(--accent); font-weight:600;">Frequency</td><td style="padding:6px;">The dominant pitch of the sound in Hz.</td></tr>
+      <tr><td style="padding:6px; color:var(--accent); font-weight:600;">Confidence</td><td style="padding:6px;">How sure the AI is (0-1). Green bar = high confidence.</td></tr>
+      <tr><td style="padding:6px; color:var(--accent); font-weight:600;">Duration</td><td style="padding:6px;">Length of the audio chunk analysed (usually 2 seconds).</td></tr>
+    </table>
+  </div>
+
+  <div class="guide-section">
+    <h3>Tips for Best Results</h3>
+    <ul>
+      <li><strong>Microphone placement:</strong> Point the mic toward the sound source. Place it near a window if monitoring outdoor noise.</li>
+      <li><strong>Distance:</strong> The further the sound source, the lower the confidence and decibel readings. Reduce the energy threshold for distant sounds.</li>
+      <li><strong>False positives:</strong> If you're getting too many false detections, increase the confidence threshold (e.g. from 0.3 to 0.5).</li>
+      <li><strong>Missing detections:</strong> If real sounds aren't being caught, decrease the confidence threshold and/or the energy threshold.</li>
+      <li><strong>Large vs small dogs:</strong> Set frequency range to 80-800Hz to focus on large deep-barking dogs. Set 500-2000Hz for small dogs.</li>
+      <li><strong>Background noise:</strong> If the mic picks up too much ambient noise, increase the energy threshold to require louder sounds.</li>
+    </ul>
+  </div>
+
+  <div class="guide-section">
+    <h3>Exporting Evidence</h3>
+    <p>Click <strong>Download CSV</strong> to export all logged detections as a spreadsheet file. This file contains:</p>
+    <ul>
+      <li>Exact date and time of every detection</li>
+      <li>Volume level (decibels) — shows how loud the sound was</li>
+      <li>Confidence score — shows how certain the AI identification was</li>
+      <li>Frequency data — can help distinguish sound types</li>
+    </ul>
+    <p>This CSV can be opened in Excel, Google Sheets, or any spreadsheet program. When submitting a noise complaint to your local council, include:</p>
+    <ol>
+      <li>The CSV file as evidence</li>
+      <li>A summary: "Between [dates], [X] instances of [sound] were detected"</li>
+      <li>Note the times — especially overnight or early morning detections</li>
+      <li>Highlight the worst offenders (highest decibel readings)</li>
+    </ol>
+  </div>
+
+  <div style="text-align:center; margin-top:20px; padding-top:16px; border-top:1px solid var(--border);">
+    <button onclick="toggleGuide()" class="btn-save" style="padding:10px 30px;">Got it</button>
+  </div>
+</div>
+</div>
+
+<style>
+  .guide-section { margin-bottom: 24px; }
+  .guide-section h3 { font-size: 1rem; color: var(--green); margin-bottom: 10px; font-weight: 600; }
+  .guide-section p { font-size: 0.9rem; color: var(--text); line-height: 1.6; margin-bottom: 8px; }
+  .guide-section ul, .guide-section ol { font-size: 0.9rem; color: var(--text); line-height: 1.6; padding-left: 20px; margin-bottom: 8px; }
+  .guide-section li { margin-bottom: 6px; }
+  .guide-section strong { color: var(--accent); }
+</style>
+
+<script>
+let soundCategories = [];
+
+function confColor(c) {
+  const v = parseFloat(c) || 0;
+  if (v >= 0.7) return 'var(--green)';
+  if (v >= 0.4) return 'var(--orange)';
+  return 'var(--red)';
+}
+
+async function fetchStatus() {
+  try {
+    const r = await fetch('/api/status');
+    const d = await r.json();
+    const el = document.getElementById('state');
+    el.textContent = d.running ? 'Listening' : 'Stopped';
+    el.className = 'stat-value ' + (d.running ? 'running' : 'stopped');
+    document.getElementById('sound-type').textContent = d.sound_type || '—';
+    document.getElementById('count').textContent = d.total_logged || 0;
+    document.getElementById('uptime').textContent = d.uptime || '—';
+    document.getElementById('header-status').textContent = d.running ? 'Listening for ' + d.sound_type : 'Stopped';
+    document.getElementById('header-status').style.color = d.running ? 'var(--green)' : 'var(--red)';
+
+    if (d.last_detection) {
+      const ld = d.last_detection;
+      document.getElementById('last-detection').textContent =
+        ld.timestamp + ' (' + ld.decibels + 'dB)';
+    }
+  } catch(e) {
+    document.getElementById('header-status').textContent = 'Connection error';
+    document.getElementById('header-status').style.color = 'var(--red)';
+  }
+}
+
+async function fetchDetections() {
+  try {
+    const limit = document.getElementById('log-limit').value;
+    const r = await fetch('/api/detections?count=' + limit);
+    const rows = await r.json();
+    const tbody = document.getElementById('detections');
+    const empty = document.getElementById('empty-state');
+
+    if (rows.length === 0) {
+      tbody.innerHTML = '';
+      empty.style.display = 'block';
+      document.getElementById('log-count').textContent = '';
+      return;
+    }
+    empty.style.display = 'none';
+    document.getElementById('log-count').textContent = rows.length + ' events';
+
+    tbody.innerHTML = rows.map(r => {
+      const conf = parseFloat(r.confidence) || 0;
+      const pct = Math.min(conf * 100, 100);
+      return `<tr>
+        <td style="white-space:nowrap;">${r.timestamp || ''}</td>
+        <td>${r.sound_type || ''}</td>
+        <td>${r.decibels || ''}dB</td>
+        <td>${r.frequency_hz || ''}Hz</td>
+        <td>
+          <span class="confidence-bar"><span class="confidence-fill" style="width:${pct}%; background:${confColor(r.confidence)};"></span></span>
+          ${r.confidence || ''}
+        </td>
+        <td>${r.duration_seconds || ''}s</td>
+      </tr>`;
+    }).join('');
+  } catch(e) { console.error(e); }
+}
+
+async function loadSettings() {
+  try {
+    const r = await fetch('/api/settings');
+    const d = await r.json();
+
+    // Threshold slider
+    document.getElementById('threshold').value = d.threshold;
+    document.getElementById('threshold-val').textContent = d.threshold;
+
+    // Energy slider
+    document.getElementById('energy_threshold').value = d.energy_threshold;
+    document.getElementById('energy-val').textContent = d.energy_threshold + 'dB';
+
+    // Advanced fields
+    document.getElementById('min_frequency').value = d.min_frequency;
+    document.getElementById('max_frequency').value = d.max_frequency;
+    document.getElementById('chunk_size').value = d.chunk_size;
+    document.getElementById('mic_device').value = d.microphone_device;
+
+    // Sound type dropdown
+    soundCategories = d.sound_categories || [];
+    const sel = document.getElementById('sound_type');
+    sel.innerHTML = soundCategories.map(c =>
+      `<option value="${c.name}" ${c.name === d.sound_type_name ? 'selected' : ''}>${c.name}</option>`
+    ).join('');
+  } catch(e) { console.error(e); }
+}
+
+function soundTypeChanged() {
+  // Immediately show feedback
+  const name = document.getElementById('sound_type').value;
+  document.getElementById('sound-type').textContent = name;
+}
+
+async function saveSettings() {
+  const data = {
+    threshold: parseFloat(document.getElementById('threshold').value),
+    energy_threshold: parseFloat(document.getElementById('energy_threshold').value),
+    min_frequency: parseFloat(document.getElementById('min_frequency').value),
+    max_frequency: parseFloat(document.getElementById('max_frequency').value),
+    chunk_size: parseFloat(document.getElementById('chunk_size').value),
+    sound_type_name: document.getElementById('sound_type').value,
+  };
+  try {
+    await fetch('/api/settings', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(data)
+    });
+    showToast('Settings saved — detector reloaded', 'success');
+  } catch(e) {
+    showToast('Failed to save settings', 'error');
+  }
+}
+
+async function control(action) {
+  try {
+    await fetch('/api/control', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action})
+    });
+    showToast(action === 'start' ? 'Detector started' : 'Detector stopped', 'success');
+    setTimeout(fetchStatus, 500);
+  } catch(e) {
+    showToast('Failed to ' + action, 'error');
+  }
+}
+
+function toggleAdvanced() {
+  const p = document.getElementById('advanced-panel');
+  const b = document.getElementById('adv-toggle');
+  if (p.style.display === 'none') {
+    p.style.display = 'block';
+    b.textContent = 'Hide';
+  } else {
+    p.style.display = 'none';
+    b.textContent = 'Show';
+  }
+}
+
+function showToast(msg, type) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast ' + type;
+  t.style.display = 'block';
+  setTimeout(() => t.style.display = 'none', 2500);
+}
+
+function toggleGuide() {
+  const g = document.getElementById('guide-overlay');
+  g.style.display = g.style.display === 'none' ? 'block' : 'none';
+}
+
+async function detectMicrophone() {
+  const status = document.getElementById('mic-status');
+  status.style.display = 'block';
+  status.textContent = '🔄 Detecting microphone...';
+  status.style.background = 'var(--bg-dark)';
+  status.style.color = 'var(--text-dim)';
+
+  try {
+    const res = await fetch('/api/detect-microphone');
+    const data = await res.json();
+
+    if (data.status === 'ok') {
+      status.style.background = 'var(--green-bg)';
+      status.style.color = 'var(--green)';
+      status.textContent = `✓ ${data.count} microphone(s) detected`;
+      if (data.devices.length > 0) {
+        status.textContent += ': ' + data.devices.join(' | ');
+      }
+    } else {
+      status.style.background = 'var(--red-bg)';
+      status.style.color = 'var(--red)';
+      status.textContent = '✗ No microphone detected';
+    }
+  } catch (e) {
+    status.style.background = 'var(--red-bg)';
+    status.style.color = 'var(--red)';
+    status.textContent = '✗ Detection failed: ' + e.message;
+  }
+}
+
+async function testMicrophone() {
+  const status = document.getElementById('mic-status');
+  status.style.display = 'block';
+  status.textContent = '🎤 Testing microphone (recording 2 seconds)...';
+  status.style.background = 'var(--bg-dark)';
+  status.style.color = 'var(--text-dim)';
+
+  try {
+    const res = await fetch('/api/test-microphone');
+    const data = await res.json();
+
+    if (data.status === 'ok') {
+      status.style.background = 'var(--green-bg)';
+      status.style.color = 'var(--green)';
+      status.textContent = `✓ Microphone working! Energy: ${data.db.toFixed(1)}dB, Peak: ${(data.peak_level*100).toFixed(1)}%`;
+    } else {
+      status.style.background = 'var(--red-bg)';
+      status.style.color = 'var(--red)';
+      status.textContent = '✗ ' + data.message;
+    }
+  } catch (e) {
+    status.style.background = 'var(--red-bg)';
+    status.style.color = 'var(--red)';
+    status.textContent = '✗ Test failed: ' + e.message;
+  }
+}
+
+// ── Init ──────────────────────────────────────────────
+loadSettings();
+fetchStatus();
+fetchDetections();
+setInterval(fetchStatus, 3000);
+setInterval(fetchDetections, 5000);
+</script>
+</body>
+</html>"""

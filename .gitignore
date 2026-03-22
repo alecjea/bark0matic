@@ -1,0 +1,15 @@
+.env
+.env.local
+.env.*.local
+node_modules/
+dist/
+build/
+*.log
+.DS_Store
+.vscode/
+.idea/
+.claude/
+.env
+*.pem
+*.key
+config.json

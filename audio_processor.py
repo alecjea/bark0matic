@@ -1,0 +1,167 @@
+"""Audio capture and feature extraction."""
+import numpy as np
+import librosa
+import sounddevice as sd
+from config import Config
+
+
+class AudioProcessor:
+    """Handles audio capture and feature extraction."""
+
+    def __init__(self):
+        """Initialize audio processor with auto-detection fallback."""
+        self.sample_rate = Config.RPI_MICROPHONE_RATE
+        self.channels = Config.RPI_MICROPHONE_CHANNELS
+        self.device = self._resolve_device(Config.RPI_MICROPHONE_DEVICE)
+        self.chunk_size = int(Config.BARK_DETECTION_CHUNK_SIZE * self.sample_rate)
+
+    def _resolve_device(self, device_str):
+        """
+        Resolve the audio device.
+        If the configured device doesn't work, try to auto-detect a USB mic.
+        """
+        # Try the configured device first
+        if device_str and device_str != "auto":
+            if self._test_device(device_str):
+                print(f"[AUDIO] Using configured device: {device_str}")
+                return device_str
+            else:
+                print(f"[AUDIO] Configured device '{device_str}' not available, auto-detecting...")
+
+        # Auto-detect: find a USB microphone
+        return self._auto_detect()
+
+    def _test_device(self, device_str):
+        """Test if an audio device is available for recording."""
+        try:
+            sd.check_input_settings(device=device_str, samplerate=self.sample_rate, channels=self.channels)
+            return True
+        except Exception:
+            return False
+
+    def _auto_detect(self):
+        """Auto-detect the best input device."""
+        try:
+            devices = sd.query_devices()
+            # Look for USB audio devices (non-default, with input channels)
+            for i, dev in enumerate(devices):
+                if dev["max_input_channels"] > 0:
+                    name = dev["name"].lower()
+                    # Prefer USB devices over built-in
+                    if "usb" in name or "microphone" in name:
+                        device_id = dev["name"]
+                        if self._test_device(device_id):
+                            print(f"[AUDIO] Auto-detected USB mic: {dev['name']} (index {i})")
+                            return device_id
+
+            # Fall back to any device with input channels
+            for i, dev in enumerate(devices):
+                if dev["max_input_channels"] > 0:
+                    device_id = dev["name"]
+                    if self._test_device(device_id):
+                        print(f"[AUDIO] Using input device: {dev['name']} (index {i})")
+                        return device_id
+
+            # Last resort: use system default
+            default = sd.default.device[0]
+            if default is not None and default >= 0:
+                print(f"[AUDIO] Using system default input device (index {default})")
+                return default
+
+        except Exception as e:
+            print(f"[AUDIO] Auto-detection failed: {e}")
+
+        # Absolute fallback
+        print("[AUDIO] No device found, using hw:1,0 as fallback")
+        return "hw:1,0"
+
+    def capture_audio_chunk(self):
+        """
+        Capture a chunk of audio from the microphone.
+
+        Returns:
+            numpy.ndarray: Audio samples as 1D array, or None on error
+        """
+        try:
+            # Use a timeout to prevent hanging if mic is unresponsive
+            timeout_sec = Config.BARK_DETECTION_CHUNK_SIZE + 10
+            audio = sd.rec(
+                self.chunk_size,
+                samplerate=self.sample_rate,
+                channels=self.channels,
+                dtype=Config.RPI_MICROPHONE_DTYPE,
+                device=self.device,
+                blocking=False,
+            )
+            sd.wait(timeout=timeout_sec)
+            return audio.flatten()
+        except Exception as e:
+            print(f"[ERROR] Audio capture failed: {e}")
+            # Try to recover by re-detecting the device
+            try:
+                new_device = self._auto_detect()
+                if new_device != self.device:
+                    print(f"[AUDIO] Switching to: {new_device}")
+                    self.device = new_device
+            except Exception:
+                pass
+            return None
+
+    def calculate_decibels(self, audio):
+        """Calculate RMS-based decibel level from audio samples."""
+        if audio is None or len(audio) == 0:
+            return -np.inf
+
+        normalized = audio.astype(np.float32) / 32768.0
+        rms = np.sqrt(np.mean(normalized ** 2))
+
+        if rms > 0:
+            db = 20 * np.log10(rms)
+        else:
+            db = -np.inf
+
+        return db
+
+    def extract_features(self, audio):
+        """
+        Extract audio features for classification.
+
+        Returns:
+            dict: Feature dictionary, or None on error
+        """
+        if audio is None or len(audio) == 0:
+            return None
+
+        try:
+            normalized = audio.astype(np.float32) / 32768.0
+            decibels = self.calculate_decibels(audio)
+
+            zcr = librosa.feature.zero_crossing_rate(normalized)[0]
+            zcr_mean = np.mean(zcr)
+
+            spec_centroid = librosa.feature.spectral_centroid(
+                y=normalized, sr=self.sample_rate
+            )[0]
+            spec_centroid_mean = np.mean(spec_centroid)
+
+            mfcc = librosa.feature.mfcc(
+                y=normalized, sr=self.sample_rate, n_mfcc=13
+            )
+            mfcc_mean = np.mean(mfcc, axis=1)
+
+            spec_rolloff = librosa.feature.spectral_rolloff(
+                y=normalized, sr=self.sample_rate
+            )[0]
+            spec_rolloff_mean = np.mean(spec_rolloff)
+
+            return {
+                "decibels": float(decibels),
+                "zcr_mean": float(zcr_mean),
+                "spec_centroid_mean": float(spec_centroid_mean),
+                "spec_rolloff_mean": float(spec_rolloff_mean),
+                "mfcc_mean": mfcc_mean.tolist(),
+                "duration": float(len(audio) / self.sample_rate),
+            }
+        except Exception as e:
+            print(f"[ERROR] Feature extraction failed: {e}")
+            return None
