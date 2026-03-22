@@ -83,20 +83,28 @@ git clone https://github.com/yourusername/barkomatic.git
 cd barkomatic
 ```
 
-**2. Install Python dependencies:**
+**2. Create a virtual environment:**
+```bash
+python3 -m venv venv
+source venv/bin/activate
+```
+
+**3. Install Python dependencies:**
 ```bash
 pip install -r requirements.txt
 ```
 
-**3. Run the app:**
+**4. Run the app:**
 ```bash
 python main.py
 ```
 
-**4. Open dashboard in browser:**
+**5. Open dashboard in browser:**
 ```
 http://localhost:8080
 ```
+
+> **Note:** On Raspberry Pi OS, Python packages must be installed in a virtual environment (PEP 668). The `source venv/bin/activate` command activates it for your current terminal session.
 
 ### First Time Setup
 

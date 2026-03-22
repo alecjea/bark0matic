@@ -48,11 +48,21 @@ echo -e "${GREEN}✓ Sufficient disk space${NC}"
 echo ""
 
 # ────────────────────────────────────────────────────────────────────
-# Step 2: Install Python dependencies
+# Step 2: Create virtual environment and install dependencies
 # ────────────────────────────────────────────────────────────────────
-echo -e "${YELLOW}[2/5] Installing Python dependencies...${NC}"
-pip3 install --quiet -r requirements.txt
-echo -e "${GREEN}✓ Dependencies installed${NC}"
+echo -e "${YELLOW}[2/5] Setting up Python virtual environment...${NC}"
+
+# Create venv if it doesn't exist
+if [ ! -d venv ]; then
+  python3 -m venv venv
+fi
+
+# Activate venv
+source venv/bin/activate
+
+# Install dependencies
+pip install --quiet -r requirements.txt
+echo -e "${GREEN}✓ Virtual environment created and dependencies installed${NC}"
 echo ""
 
 # ────────────────────────────────────────────────────────────────────
@@ -71,7 +81,8 @@ After=network.target
 Type=simple
 User=$USER
 WorkingDirectory=$SCRIPT_DIR
-ExecStart=/usr/bin/python3 $SCRIPT_DIR/main.py
+Environment="PATH=$SCRIPT_DIR/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart=$SCRIPT_DIR/venv/bin/python $SCRIPT_DIR/main.py
 Restart=always
 RestartSec=10
 StandardOutput=journal
