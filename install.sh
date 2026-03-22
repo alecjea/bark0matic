@@ -67,10 +67,12 @@ echo -e "${YELLOW}[4/7] Cloning Barkomatic repository...${NC}"
 if [ -d "$HOME/bark0matic" ]; then
   echo "  Repository already exists, updating..."
   cd "$HOME/bark0matic"
-  git pull origin main -q
+  git fetch origin -q
+  git checkout master -q 2>/dev/null || true
+  git pull origin master -q
 else
   cd "$HOME"
-  git clone https://github.com/alecjea/bark0matic.git -q
+  git clone -b master https://github.com/alecjea/bark0matic.git -q
   cd bark0matic
 fi
 
@@ -101,11 +103,12 @@ After=network.target
 Type=simple
 User=$USER
 WorkingDirectory=$SCRIPT_DIR
-ExecStart=/usr/bin/python3 $SCRIPT_DIR/main.py
+ExecStart=/usr/bin/python3 -u $SCRIPT_DIR/main.py
 Restart=always
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
+Environment=PYTHONUNBUFFERED=1
 
 [Install]
 WantedBy=multi-user.target
@@ -113,8 +116,10 @@ EOF
 
 sudo systemctl daemon-reload
 sudo systemctl enable barkomatic
-echo -e "${GREEN}✓ Systemd service created${NC}"
+sudo systemctl restart barkomatic
+echo -e "${GREEN}✓ Systemd service created and started${NC}"
 echo "  - Auto-start on boot enabled"
+echo "  - Service is now running"
 echo ""
 
 # ────────────────────────────────────────────────────────────
