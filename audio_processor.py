@@ -182,7 +182,6 @@ class AudioProcessor:
             spec_rolloff_mean = spec_centroid_mean * 1.5
 
             mfcc_mean = np.zeros(13)
-            spec_rolloff_mean = np.mean(spec_rolloff)
 
             return {
                 "decibels": float(decibels),
