@@ -1,4 +1,4 @@
-# Barkomatic
+# Bark0matic
 
 **AI Sound Detection & Logging for Raspberry Pi**
 
