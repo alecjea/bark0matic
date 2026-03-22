@@ -99,35 +99,42 @@ class AudioProcessor:
         """
         try:
             import subprocess
-            import io
             import wave
+            import tempfile
+            import os
 
             duration = Config.BARK_DETECTION_CHUNK_SIZE
             device = self.device if self.device and self.device != "auto" else "hw:2,0"
 
-            # Use arecord directly - more reliable on RPI than sounddevice
-            cmd = [
-                'arecord',
-                '-D', device,
-                '-f', 'S16_LE',
-                '-r', str(self.sample_rate),
-                '-c', '1',
-                '-d', str(int(duration)),
-                '-t', 'wav',
-                '-q',
-                '-'
-            ]
-            result = subprocess.run(cmd, capture_output=True, timeout=int(duration) + 5)
+            # Write to temp file to avoid pipe buffer issues
+            tmp = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+            tmp_path = tmp.name
+            tmp.close()
 
-            if result.returncode != 0:
-                print(f"[ERROR] arecord failed: {result.stderr.decode()}")
-                return None
+            try:
+                cmd = [
+                    'arecord',
+                    '-D', device,
+                    '-f', 'S16_LE',
+                    '-r', str(self.sample_rate),
+                    '-c', '1',
+                    '-d', str(int(duration)),
+                    '-t', 'wav',
+                    '-q',
+                    tmp_path
+                ]
+                result = subprocess.run(cmd, capture_output=True, timeout=int(duration) + 5)
 
-            # Parse WAV from stdout
-            wav_data = io.BytesIO(result.stdout)
-            with wave.open(wav_data, 'rb') as wf:
-                frames = wf.readframes(wf.getnframes())
-                audio = np.frombuffer(frames, dtype=np.int16)
+                if result.returncode != 0:
+                    print(f"[ERROR] arecord failed: {result.stderr.decode()}")
+                    return None
+
+                with wave.open(tmp_path, 'rb') as wf:
+                    frames = wf.readframes(wf.getnframes())
+                    audio = np.frombuffer(frames, dtype=np.int16)
+            finally:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
 
             return audio.flatten()
         except Exception as e:
