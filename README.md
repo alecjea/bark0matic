@@ -20,6 +20,12 @@ Detects sounds (dog barks, music, sirens, and more) through a USB microphone usi
 
 ## Quick Install (Fresh Raspberry Pi)
 
+**One line:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/alecjea/bark0matic/master/install.sh | bash
+```
+
+**Or clone and run:**
 ```bash
 git clone -b master https://github.com/alecjea/bark0matic.git
 cd bark0matic
