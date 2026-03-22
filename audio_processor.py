@@ -104,7 +104,9 @@ class AudioProcessor:
             import os
 
             duration = Config.BARK_DETECTION_CHUNK_SIZE
-            device = self.device if self.device and self.device != "auto" else "hw:2,0"
+            raw_device = self.device if self.device and self.device != "auto" else "hw:2,0"
+            # Use plughw to let ALSA resample to the requested rate
+            device = raw_device.replace("hw:", "plughw:", 1) if raw_device.startswith("hw:") else raw_device
 
             # Write to temp file to avoid pipe buffer issues
             tmp = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
