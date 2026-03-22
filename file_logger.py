@@ -43,17 +43,23 @@ class FileLogger:
             dog_size = "Large dog" if frequency_hz < 2000 else "Small dog"
 
         try:
-            with open(self.csv_path, "a", newline="") as f:
-                writer = csv.writer(f)
-                writer.writerow([
-                    timestamp,
-                    Config.SOUND_TYPE_NAME,
-                    f"{decibels:.1f}",
-                    f"{frequency_hz:.0f}",
-                    f"{confidence:.3f}",
-                    f"{duration:.1f}",
-                    dog_size,
-                ])
+            # Read existing content
+            lines = []
+            if os.path.exists(self.csv_path):
+                with open(self.csv_path, "r", newline="") as f:
+                    lines = f.readlines()
+
+            new_row = f"{timestamp},{Config.SOUND_TYPE_NAME},{decibels:.1f},{frequency_hz:.0f},{confidence:.3f},{duration:.1f},{dog_size}\n"
+
+            # Write header + new row at top + rest
+            with open(self.csv_path, "w", newline="") as f:
+                if lines:
+                    f.write(lines[0])  # header
+                    f.write(new_row)
+                    f.writelines(lines[1:])  # existing rows
+                else:
+                    f.write(",".join(self.HEADER) + "\n")
+                    f.write(new_row)
             dog_info = f" | {dog_size}" if dog_size else ""
             print(
                 f"[LOG] {timestamp} | {Config.SOUND_TYPE_NAME} | "
@@ -80,8 +86,8 @@ class FileLogger:
                 reader = csv.DictReader(f)
                 rows = list(reader)
 
-            # Return newest first, limited to count
-            return rows[-count:][::-1]
+            # Already newest first, just limit
+            return rows[:count]
         except Exception as e:
             print(f"[ERROR] Failed to read events: {e}")
             return []
