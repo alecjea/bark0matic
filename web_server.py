@@ -150,14 +150,26 @@ def create_app(sound_detector):
         try:
             import sounddevice as sd
             import numpy as np
+            import time
 
             SAMPLE_RATE = 44100
             DURATION = 2
 
+            # Stop detector to free the mic
+            was_running = detector.running
+            if was_running:
+                detector.stop()
+                time.sleep(1)
+
             print(f"[MIC] Testing device: {device}")
-            audio = sd.rec(int(SAMPLE_RATE * DURATION), samplerate=SAMPLE_RATE,
-                          channels=1, dtype=np.float32, device=device)
-            sd.wait()
+            try:
+                audio = sd.rec(int(SAMPLE_RATE * DURATION), samplerate=SAMPLE_RATE,
+                              channels=1, dtype=np.float32, device=device)
+                sd.wait()
+            finally:
+                # Restart detector if it was running
+                if was_running:
+                    detector.start()
 
             rms_energy = np.sqrt(np.mean(audio**2))
             peak = np.max(np.abs(audio))
@@ -177,6 +189,9 @@ def create_app(sound_detector):
                 "peak": round(float(peak * 100), 1)
             })
         except Exception as e:
+            # Make sure detector restarts even on error
+            if detector and not detector.running:
+                detector.start()
             return jsonify({
                 "status": "error",
                 "message": f"Test failed: {str(e)}"
