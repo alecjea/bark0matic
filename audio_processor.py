@@ -108,7 +108,7 @@ class AudioProcessor:
                 device=self.device,
                 blocking=False,
             )
-            sd.wait(timeout=timeout_sec)
+            sd.wait()
             return audio.flatten()
         except Exception as e:
             print(f"[ERROR] Audio capture failed: {e}")
