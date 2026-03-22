@@ -71,18 +71,20 @@ class SoundDetector:
         try:
             while not self._stop_event.is_set():
                 audio = self.audio_processor.capture_audio_chunk()
+                print(f"[DEBUG] audio={'None' if audio is None else len(audio)}", flush=True)
                 if audio is None:
                     continue
 
                 features = self.audio_processor.extract_features(audio)
                 if features is None:
+                    print("[DEBUG] features=None", flush=True)
                     continue
 
                 is_match, confidence, frequency = self.classifier.classify(
                     features, audio
                 )
 
-                print(f"[DEBUG] conf={confidence:.4f} dB={features['decibels']:.1f}")
+                print(f"[DEBUG] conf={confidence:.4f} dB={features['decibels']:.1f}", flush=True)
 
                 if is_match:
                     self.detection_count += 1
