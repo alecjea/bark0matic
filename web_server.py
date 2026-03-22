@@ -59,6 +59,8 @@ def create_app(sound_detector):
     @app.route("/api/settings", methods=["POST"])
     def api_save_settings():
         data = request.json
+        if "local_timezone" in data:
+            Config.LOCAL_TIMEZONE = data["local_timezone"]
         if "threshold" in data:
             Config.BARK_DETECTION_THRESHOLD = float(data["threshold"])
         if "min_frequency" in data:
@@ -632,7 +634,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       <div class="field" style="margin-bottom:14px;">
         <label>Confidence Threshold</label>
         <div class="range-row">
-          <input type="range" id="threshold" min="0.01" max="1" step="0.01"
+          <input type="range" id="threshold" min="0.001" max="1" step="0.001"
                  oninput="document.getElementById('threshold-val').textContent=this.value">
           <span class="range-val" id="threshold-val">0.3</span>
         </div>
@@ -675,8 +677,12 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           <input type="number" id="chunk_size" step="0.5" min="0.5" max="10">
         </div>
         <div class="field">
+          <label>Timezone</label>
+          <input type="text" id="local_timezone" placeholder="e.g. Australia/Melbourne">
+        </div>
+        <div class="field">
           <label>Microphone Device</label>
-          <input type="text" id="mic_device" disabled style="opacity:0.5;">
+          <input type="text" id="mic_device_adv" disabled style="opacity:0.5;">
         </div>
       </div>
     </div>
@@ -911,7 +917,8 @@ async function loadSettings() {
     document.getElementById('min_frequency').value = d.min_frequency;
     document.getElementById('max_frequency').value = d.max_frequency;
     document.getElementById('chunk_size').value = d.chunk_size;
-    document.getElementById('mic_device').value = d.microphone_device;
+    document.getElementById('local_timezone').value = d.local_timezone || '';
+    document.getElementById('mic_device_adv').value = d.microphone_device;
 
     // Sound type dropdown
     soundCategories = d.sound_categories || [];
@@ -935,6 +942,7 @@ async function saveSettings() {
     min_frequency: parseFloat(document.getElementById('min_frequency').value),
     max_frequency: parseFloat(document.getElementById('max_frequency').value),
     chunk_size: parseFloat(document.getElementById('chunk_size').value),
+    local_timezone: document.getElementById('local_timezone').value.trim(),
     sound_type_name: document.getElementById('sound_type').value,
   };
   try {

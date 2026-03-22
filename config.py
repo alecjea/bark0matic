@@ -13,7 +13,7 @@ class Config:
     # Sound detection target
     SOUND_TYPE_NAME = "Dog bark"
     SOUND_TYPE_INDICES = [69, 70, 75]
-    LOCAL_TIMEZONE = "UTC"
+    LOCAL_TIMEZONE = "Australia/Melbourne"
 
     # Audio
     RPI_MICROPHONE_DEVICE = "auto"
@@ -86,7 +86,10 @@ class Config:
     @classmethod
     def get_timezone(cls):
         """Get ZoneInfo for the configured timezone."""
-        return ZoneInfo(cls.LOCAL_TIMEZONE)
+        try:
+            return ZoneInfo(cls.LOCAL_TIMEZONE)
+        except Exception:
+            return ZoneInfo("UTC")
 
     @classmethod
     def to_dict(cls):
