@@ -632,7 +632,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       <div class="field" style="margin-bottom:14px;">
         <label>Confidence Threshold</label>
         <div class="range-row">
-          <input type="range" id="threshold" min="0.05" max="1" step="0.05"
+          <input type="range" id="threshold" min="0.01" max="1" step="0.01"
                  oninput="document.getElementById('threshold-val').textContent=this.value">
           <span class="range-val" id="threshold-val">0.3</span>
         </div>
