@@ -24,7 +24,7 @@ cd "$SCRIPT_DIR"
 # Step 1: Pull latest changes
 # ────────────────────────────────────────────────────────────
 echo -e "${YELLOW}[1/2] Pulling latest changes...${NC}"
-git pull origin main -q
+git pull origin master -q
 echo -e "${GREEN}✓ Latest changes pulled${NC}"
 echo ""
 
