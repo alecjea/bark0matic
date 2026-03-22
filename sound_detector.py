@@ -82,6 +82,8 @@ class SoundDetector:
                     features, audio
                 )
 
+                print(f"[DEBUG] conf={confidence:.4f} dB={features['decibels']:.1f}")
+
                 if is_match:
                     self.detection_count += 1
                     explanation = self.classifier.get_explanation(
