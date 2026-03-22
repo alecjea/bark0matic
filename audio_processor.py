@@ -159,7 +159,8 @@ class AudioProcessor:
 
     def extract_features(self, audio):
         """
-        Extract audio features for classification.
+        Extract basic audio features for classification.
+        YAMNet does the heavy lifting so we only need lightweight features.
 
         Returns:
             dict: Feature dictionary, or None on error
@@ -171,22 +172,16 @@ class AudioProcessor:
             normalized = audio.astype(np.float32) / 32768.0
             decibels = self.calculate_decibels(audio)
 
-            zcr = librosa.feature.zero_crossing_rate(normalized)[0]
-            zcr_mean = np.mean(zcr)
+            # Lightweight features only - no librosa heavy processing
+            zcr_mean = float(np.mean(np.abs(np.diff(np.sign(normalized)))) / 2)
 
-            spec_centroid = librosa.feature.spectral_centroid(
-                y=normalized, sr=self.sample_rate
-            )[0]
-            spec_centroid_mean = np.mean(spec_centroid)
+            # Simple spectral centroid via FFT (fast)
+            fft = np.abs(np.fft.rfft(normalized))
+            freqs = np.fft.rfftfreq(len(normalized), 1.0 / self.sample_rate)
+            spec_centroid_mean = float(np.sum(freqs * fft) / (np.sum(fft) + 1e-10))
+            spec_rolloff_mean = spec_centroid_mean * 1.5
 
-            mfcc = librosa.feature.mfcc(
-                y=normalized, sr=self.sample_rate, n_mfcc=13
-            )
-            mfcc_mean = np.mean(mfcc, axis=1)
-
-            spec_rolloff = librosa.feature.spectral_rolloff(
-                y=normalized, sr=self.sample_rate
-            )[0]
+            mfcc_mean = np.zeros(13)
             spec_rolloff_mean = np.mean(spec_rolloff)
 
             return {
