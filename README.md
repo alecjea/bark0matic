@@ -4,6 +4,9 @@
 
 Detects sounds (dog barks, music, sirens, and more) through a USB microphone using Google's YAMNet AI model. Logs detections with timestamps and confidence scores to CSV. Controlled via a real-time web dashboard.
 
+<img width="711" height="964" alt="image" src="https://github.com/user-attachments/assets/4d38e77d-3775-427e-820d-a40bff61fe6b" />
+
+
 ---
 
 ## Features
@@ -18,6 +21,8 @@ Detects sounds (dog barks, music, sirens, and more) through a USB microphone usi
 - **Timezone Support** — Configurable local timezone for accurate timestamps
 - **Systemd Service** — Auto-starts on boot, auto-restarts on crash
 - **Adjustable Sensitivity** — Confidence threshold (0.01–1.0), energy threshold, frequency range
+
+<img width="793" height="742" alt="image" src="https://github.com/user-attachments/assets/fef814d9-1899-41b7-81ac-fc63893831df" />
 
 ---
 
