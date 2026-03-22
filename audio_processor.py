@@ -40,40 +40,55 @@ class AudioProcessor:
             return False
 
     def _auto_detect(self):
-        """Auto-detect the best input device."""
+        """Auto-detect the best input device using arecord."""
+        import subprocess
+        import re
+
+        # Use arecord -l to find real hardware devices
+        try:
+            result = subprocess.run(['arecord', '-l'], capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                usb_devices = []
+                all_devices = []
+
+                for line in result.stdout.split('\n'):
+                    m = re.match(r'card (\d+):.*\[(.+?)\].*device (\d+):', line)
+                    if m:
+                        card, name, dev = m.group(1), m.group(2).strip(), m.group(3)
+                        hw_id = f"hw:{card},{dev}"
+                        all_devices.append((hw_id, name))
+                        if 'usb' in name.lower():
+                            usb_devices.append((hw_id, name))
+
+                # Prefer USB devices
+                if usb_devices:
+                    hw_id, name = usb_devices[0]
+                    print(f"[AUDIO] Auto-detected USB mic: {name} ({hw_id})")
+                    return hw_id
+
+                # Fall back to any capture device
+                if all_devices:
+                    hw_id, name = all_devices[0]
+                    print(f"[AUDIO] Using capture device: {name} ({hw_id})")
+                    return hw_id
+
+        except Exception as e:
+            print(f"[AUDIO] arecord detection failed: {e}")
+
+        # Fallback: try sounddevice
         try:
             devices = sd.query_devices()
-            # Look for USB audio devices (non-default, with input channels)
             for i, dev in enumerate(devices):
                 if dev["max_input_channels"] > 0:
                     name = dev["name"].lower()
-                    # Prefer USB devices over built-in
-                    if "usb" in name or "microphone" in name:
-                        device_id = dev["name"]
-                        if self._test_device(device_id):
-                            print(f"[AUDIO] Auto-detected USB mic: {dev['name']} (index {i})")
-                            return device_id
+                    if "usb" in name:
+                        print(f"[AUDIO] Using sounddevice USB: {dev['name']} (index {i})")
+                        return i
+        except Exception:
+            pass
 
-            # Fall back to any device with input channels
-            for i, dev in enumerate(devices):
-                if dev["max_input_channels"] > 0:
-                    device_id = dev["name"]
-                    if self._test_device(device_id):
-                        print(f"[AUDIO] Using input device: {dev['name']} (index {i})")
-                        return device_id
-
-            # Last resort: use system default
-            default = sd.default.device[0]
-            if default is not None and default >= 0:
-                print(f"[AUDIO] Using system default input device (index {default})")
-                return default
-
-        except Exception as e:
-            print(f"[AUDIO] Auto-detection failed: {e}")
-
-        # Absolute fallback
-        print("[AUDIO] No device found, using hw:1,0 as fallback")
-        return "hw:1,0"
+        print("[AUDIO] No device found, using hw:2,0 as fallback")
+        return "hw:2,0"
 
     def capture_audio_chunk(self):
         """
