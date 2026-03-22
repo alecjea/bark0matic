@@ -1,4 +1,5 @@
 """Flask web interface for bark0matic."""
+from datetime import datetime, timedelta
 from flask import Flask, jsonify, request, send_file, render_template_string
 from config import Config
 
@@ -107,6 +108,52 @@ def create_app(sound_detector):
     def api_download():
         csv_path = detector.logger.get_csv_path()
         return send_file(csv_path, as_attachment=True, download_name="detections.csv")
+
+    @app.route("/api/chart-data")
+    def api_chart_data():
+        """Return hourly detection counts for the last 24 hours."""
+        try:
+            tz = Config.get_timezone()
+            now = datetime.now(tz)
+            rows = detector.logger.get_recent(5000)
+
+            # Build 24 hourly buckets
+            buckets = {}
+            for i in range(24):
+                h = now - timedelta(hours=23 - i)
+                key = h.strftime("%Y-%m-%d %H")
+                buckets[key] = 0
+
+            for row in rows:
+                ts_str = row.get("timestamp", "")
+                try:
+                    # Parse timestamp, try with timezone suffix first
+                    for fmt in ("%Y-%m-%d %H:%M:%S %Z", "%Y-%m-%d %H:%M:%S"):
+                        try:
+                            ts = datetime.strptime(ts_str.strip(), fmt)
+                            break
+                        except ValueError:
+                            continue
+                    else:
+                        continue
+                    key = ts.strftime("%Y-%m-%d %H")
+                    if key in buckets:
+                        buckets[key] += 1
+                except Exception:
+                    continue
+
+            labels = []
+            counts = []
+            for i in range(24):
+                h = now - timedelta(hours=23 - i)
+                key = h.strftime("%Y-%m-%d %H")
+                hour_label = h.strftime("%-I%p").lower()
+                labels.append(hour_label)
+                counts.append(buckets.get(key, 0))
+
+            return jsonify({"labels": labels, "counts": counts})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
 
     @app.route("/api/detect-microphone")
     def api_detect_microphone():
@@ -544,6 +591,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     .header { flex-direction: column; gap: 8px; }
   }
 </style>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
 
@@ -590,6 +638,16 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     <div class="controls">
       <button class="btn-start" onclick="control('start')">&#9654; Start</button>
       <button class="btn-stop" onclick="control('stop')">&#9632; Stop</button>
+    </div>
+  </div>
+
+  <!-- ── Detection History Chart ────────────────────────── -->
+  <div class="card">
+    <div class="card-header">
+      <h2>Detection History (24h)</h2>
+    </div>
+    <div style="position:relative; height:220px;">
+      <canvas id="historyChart"></canvas>
     </div>
   </div>
 
@@ -1127,12 +1185,69 @@ async function saveMic() {
 }
 
 // ── Init ──────────────────────────────────────────────
+// ── Detection History Chart ──────────────────────────
+let historyChart = null;
+async function fetchChartData() {
+  try {
+    const r = await fetch('/api/chart-data');
+    const d = await r.json();
+    if (d.error) return;
+
+    const ctx = document.getElementById('historyChart').getContext('2d');
+    if (historyChart) {
+      historyChart.data.labels = d.labels;
+      historyChart.data.datasets[0].data = d.counts;
+      historyChart.update();
+    } else {
+      historyChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: d.labels,
+          datasets: [{
+            label: 'Detections',
+            data: d.counts,
+            backgroundColor: d.counts.map(c => c > 0 ? '#f97316' : 'rgba(255,255,255,0.05)'),
+            borderRadius: 4,
+            borderSkipped: false,
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                title: (items) => items[0].label,
+                label: (item) => item.raw + ' detection' + (item.raw !== 1 ? 's' : '')
+              }
+            }
+          },
+          scales: {
+            x: {
+              ticks: { color: '#9ca3af', font: { size: 10 }, maxRotation: 45 },
+              grid: { display: false }
+            },
+            y: {
+              beginAtZero: true,
+              ticks: { color: '#9ca3af', stepSize: 1, precision: 0 },
+              grid: { color: 'rgba(255,255,255,0.06)' }
+            }
+          }
+        }
+      });
+    }
+  } catch(e) { console.error('Chart error:', e); }
+}
+
 loadSettings();
 fetchStatus();
 fetchDetections();
+fetchChartData();
 detectMics(true);
 setInterval(fetchStatus, 3000);
 setInterval(fetchDetections, 5000);
+setInterval(fetchChartData, 30000);
 </script>
 </body>
 </html>"""
