@@ -949,20 +949,31 @@ function toggleGuide() {
   g.style.display = g.style.display === 'none' ? 'block' : 'none';
 }
 
-async function detectMics() {
+async function detectMics(silent) {
   const r = document.getElementById('mic-result');
   const sel = document.getElementById('mic_device');
-  r.style.display = 'block';
-  r.style.background = 'var(--bg-dark)';
-  r.style.color = 'var(--text-dim)';
-  r.textContent = 'Detecting microphones...';
+  if (!silent) {
+    r.style.display = 'block';
+    r.style.background = 'var(--bg-dark)';
+    r.style.color = 'var(--text-dim)';
+    r.textContent = 'Detecting microphones...';
+  }
 
   try {
     const res = await fetch('/api/detect-microphone');
     const data = await res.json();
 
-    if (data.status === 'ok' && data.devices.length > 0) {
+    if (data.status === 'ok') {
       sel.innerHTML = '';
+
+      // If no devices found via arecord, show current config as option
+      if (data.devices.length === 0 && data.current) {
+        const opt = document.createElement('option');
+        opt.value = data.current;
+        opt.textContent = data.current + ' (configured)';
+        sel.appendChild(opt);
+      }
+
       data.devices.forEach(d => {
         const opt = document.createElement('option');
         opt.value = d.id;
@@ -970,18 +981,29 @@ async function detectMics() {
         if (d.id === data.current) opt.selected = true;
         sel.appendChild(opt);
       });
-      r.style.background = 'var(--green-bg)';
-      r.style.color = 'var(--green)';
-      r.textContent = data.devices.length + ' microphone(s) found';
-    } else {
+
+      // If nothing matched current, select first USB device
+      if (!sel.value && data.devices.length > 0) {
+        sel.selectedIndex = 0;
+      }
+
+      if (!silent) {
+        r.style.display = 'block';
+        r.style.background = 'var(--green-bg)';
+        r.style.color = 'var(--green)';
+        r.textContent = data.devices.length + ' microphone(s) found';
+      }
+    } else if (!silent) {
       r.style.background = 'var(--red-bg)';
       r.style.color = 'var(--red)';
       r.textContent = 'No microphones detected';
     }
   } catch (e) {
-    r.style.background = 'var(--red-bg)';
-    r.style.color = 'var(--red)';
-    r.textContent = 'Detection failed: ' + e.message;
+    if (!silent) {
+      r.style.background = 'var(--red-bg)';
+      r.style.color = 'var(--red)';
+      r.textContent = 'Detection failed: ' + e.message;
+    }
   }
 }
 
@@ -1047,7 +1069,7 @@ async function saveMic() {
 loadSettings();
 fetchStatus();
 fetchDetections();
-detectMics();
+detectMics(true);
 setInterval(fetchStatus, 3000);
 setInterval(fetchDetections, 5000);
 </script>
