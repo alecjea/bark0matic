@@ -1,4 +1,4 @@
-"""Flask web interface for Barkomatic."""
+"""Flask web interface for bark0matic."""
 from flask import Flask, jsonify, request, send_file, render_template_string
 from config import Config
 
@@ -225,7 +225,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Barkomatic</title>
+<title>bark0matic</title>
 <style>
   :root {
     --bg-dark: #0b1120;
@@ -546,7 +546,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 <body>
 
 <div class="header">
-  <h1>Barkomatic <span class="header-badge">v2</span></h1>
+  <h1>bark0matic <span class="header-badge">v2</span></h1>
   <div style="display:flex; align-items:center; gap:12px;">
     <div style="display:flex; align-items:center; gap:6px;">
       <span class="pulse-dot" id="header-dot"></span>
@@ -731,16 +731,16 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 <div style="max-width:700px; margin:40px auto; background:var(--bg-card); border:1px solid var(--border); border-radius:16px; padding:32px; position:relative;">
   <button onclick="toggleGuide()" style="position:absolute; top:16px; right:16px; background:none; border:none; color:var(--text-dim); font-size:1.5rem; cursor:pointer;">&times;</button>
 
-  <h2 style="font-size:1.4rem; color:var(--accent); margin-bottom:24px;">How to Use Barkomatic</h2>
+  <h2 style="font-size:1.4rem; color:var(--accent); margin-bottom:24px;">How to Use bark0matic</h2>
 
   <div class="guide-section">
-    <h3>What is Barkomatic?</h3>
-    <p>Barkomatic uses AI to listen for specific sounds through a microphone connected to your Raspberry Pi. When it detects the target sound (e.g. a dog barking), it logs the event with a timestamp, volume level, and confidence score. This data can be exported as a CSV file for use as evidence in noise complaints or other purposes.</p>
+    <h3>What is bark0matic?</h3>
+    <p>bark0matic uses AI to listen for specific sounds through a microphone connected to your Raspberry Pi. When it detects the target sound (e.g. a dog barking), it logs the event with a timestamp, volume level, and confidence score. This data can be exported as a CSV file for use as evidence in noise complaints or other purposes.</p>
   </div>
 
   <div class="guide-section">
     <h3>How Detection Works</h3>
-    <p>Barkomatic uses <strong>YAMNet</strong>, a Google AI model trained on over 2 million audio clips covering 521 different sounds. It runs entirely on your Raspberry Pi — no internet required after setup.</p>
+    <p>bark0matic uses <strong>YAMNet</strong>, a Google AI model trained on over 2 million audio clips covering 521 different sounds. It runs entirely on your Raspberry Pi — no internet required after setup.</p>
     <p>Every 2 seconds, the microphone captures audio. YAMNet analyses it and returns a <strong>confidence score</strong> (0 to 1) for each sound type. If the score exceeds your threshold, it's logged as a detection.</p>
     <ul>
       <li><strong>0.8 - 1.0</strong> — Very confident. Almost certainly the target sound.</li>
