@@ -33,11 +33,12 @@ echo ""
 # ────────────────────────────────────────────────────────────
 echo -e "${YELLOW}[2/2] Restarting Barkomatic service...${NC}"
 
+sudo systemctl restart barkomatic
+sleep 2
 if systemctl is-active --quiet barkomatic; then
-  sudo systemctl restart barkomatic
   echo -e "${GREEN}✓ Service restarted${NC}"
 else
-  echo -e "${GREEN}✓ Service not running (manual restart needed)${NC}"
+  echo -e "${RED}✗ Service failed to start - check: sudo journalctl -u barkomatic -n 20${NC}"
 fi
 
 echo ""
