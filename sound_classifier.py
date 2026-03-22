@@ -149,11 +149,14 @@ class SoundClassifier:
             try:
                 waveform = raw_audio.astype(np.float32) / 32768.0
                 if self.source_sample_rate != YAMNET_SAMPLE_RATE:
-                    waveform = librosa.resample(
-                        waveform,
-                        orig_sr=self.source_sample_rate,
-                        target_sr=YAMNET_SAMPLE_RATE,
-                    )
+                    # Fast numpy resample instead of slow librosa
+                    ratio = YAMNET_SAMPLE_RATE / self.source_sample_rate
+                    new_len = int(len(waveform) * ratio)
+                    waveform = np.interp(
+                        np.linspace(0, len(waveform) - 1, new_len),
+                        np.arange(len(waveform)),
+                        waveform
+                    ).astype(np.float32)
 
                 input_details = self.interpreter.get_input_details()
                 output_details = self.interpreter.get_output_details()
