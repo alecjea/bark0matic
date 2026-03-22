@@ -111,47 +111,85 @@ def create_app(sound_detector):
 
     @app.route("/api/chart-data")
     def api_chart_data():
-        """Return hourly detection counts for the last 24 hours."""
+        """Return detection counts bucketed by period: 24h (hourly), week (daily), month (daily)."""
+        period = request.args.get("period", "24h")
         try:
             tz = Config.get_timezone()
             now = datetime.now(tz)
-            rows = detector.logger.get_recent(5000)
+            rows = detector.logger.get_recent(50000)
 
-            # Build 24 hourly buckets
-            buckets = {}
-            for i in range(24):
-                h = now - timedelta(hours=23 - i)
-                key = h.strftime("%Y-%m-%d %H")
-                buckets[key] = 0
-
-            for row in rows:
-                ts_str = row.get("timestamp", "")
-                try:
-                    # Parse timestamp, try with timezone suffix first
-                    for fmt in ("%Y-%m-%d %H:%M:%S %Z", "%Y-%m-%d %H:%M:%S"):
-                        try:
-                            ts = datetime.strptime(ts_str.strip(), fmt)
-                            break
-                        except ValueError:
-                            continue
-                    else:
+            def parse_ts(ts_str):
+                for fmt in ("%Y-%m-%d %H:%M:%S %Z", "%Y-%m-%d %H:%M:%S"):
+                    try:
+                        return datetime.strptime(ts_str.strip(), fmt)
+                    except ValueError:
                         continue
-                    key = ts.strftime("%Y-%m-%d %H")
-                    if key in buckets:
-                        buckets[key] += 1
-                except Exception:
-                    continue
+                return None
 
-            labels = []
-            counts = []
-            for i in range(24):
-                h = now - timedelta(hours=23 - i)
-                key = h.strftime("%Y-%m-%d %H")
-                hour_label = h.strftime("%-I%p").lower()
-                labels.append(hour_label)
-                counts.append(buckets.get(key, 0))
+            if period == "week":
+                n_buckets = 7
+                buckets = {}
+                for i in range(n_buckets):
+                    d = now - timedelta(days=n_buckets - 1 - i)
+                    key = d.strftime("%Y-%m-%d")
+                    buckets[key] = 0
+                for row in rows:
+                    ts = parse_ts(row.get("timestamp", ""))
+                    if ts:
+                        key = ts.strftime("%Y-%m-%d")
+                        if key in buckets:
+                            buckets[key] += 1
+                labels = []
+                counts = []
+                for i in range(n_buckets):
+                    d = now - timedelta(days=n_buckets - 1 - i)
+                    key = d.strftime("%Y-%m-%d")
+                    labels.append(d.strftime("%a %d"))
+                    counts.append(buckets.get(key, 0))
 
-            return jsonify({"labels": labels, "counts": counts})
+            elif period == "month":
+                n_buckets = 30
+                buckets = {}
+                for i in range(n_buckets):
+                    d = now - timedelta(days=n_buckets - 1 - i)
+                    key = d.strftime("%Y-%m-%d")
+                    buckets[key] = 0
+                for row in rows:
+                    ts = parse_ts(row.get("timestamp", ""))
+                    if ts:
+                        key = ts.strftime("%Y-%m-%d")
+                        if key in buckets:
+                            buckets[key] += 1
+                labels = []
+                counts = []
+                for i in range(n_buckets):
+                    d = now - timedelta(days=n_buckets - 1 - i)
+                    key = d.strftime("%Y-%m-%d")
+                    labels.append(d.strftime("%d/%m"))
+                    counts.append(buckets.get(key, 0))
+
+            else:  # 24h default
+                n_buckets = 24
+                buckets = {}
+                for i in range(n_buckets):
+                    h = now - timedelta(hours=n_buckets - 1 - i)
+                    key = h.strftime("%Y-%m-%d %H")
+                    buckets[key] = 0
+                for row in rows:
+                    ts = parse_ts(row.get("timestamp", ""))
+                    if ts:
+                        key = ts.strftime("%Y-%m-%d %H")
+                        if key in buckets:
+                            buckets[key] += 1
+                labels = []
+                counts = []
+                for i in range(n_buckets):
+                    h = now - timedelta(hours=n_buckets - 1 - i)
+                    key = h.strftime("%Y-%m-%d %H")
+                    labels.append(h.strftime("%-I%p").lower())
+                    counts.append(buckets.get(key, 0))
+
+            return jsonify({"labels": labels, "counts": counts, "period": period})
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
@@ -433,6 +471,9 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   .btn-download { background: var(--blue); color: #000; }
   .btn-save { background: var(--purple); color: #fff; }
   .btn-clear { background: transparent; border: 1px solid var(--border); color: var(--text-dim); }
+  .chart-period { background: transparent; border: 1px solid var(--border); color: var(--text-dim); padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 0.75rem; }
+  .chart-period.active { background: var(--orange); color: #000; border-color: var(--orange); font-weight: 600; }
+  .chart-period:hover:not(.active) { border-color: var(--text-dim); color: var(--text); }
 
   /* ── Form Fields ────────────────────────────────────── */
   .settings-grid {
@@ -644,7 +685,12 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   <!-- ── Detection History Chart ────────────────────────── -->
   <div class="card">
     <div class="card-header">
-      <h2>Detection History (24h)</h2>
+      <h2>Detection History</h2>
+      <div style="display:flex; gap:4px;">
+        <button class="chart-period active" data-period="24h" onclick="setChartPeriod('24h')">24h</button>
+        <button class="chart-period" data-period="week" onclick="setChartPeriod('week')">Week</button>
+        <button class="chart-period" data-period="month" onclick="setChartPeriod('month')">Month</button>
+      </div>
     </div>
     <div style="position:relative; height:220px;">
       <canvas id="historyChart"></canvas>
@@ -1187,9 +1233,17 @@ async function saveMic() {
 // ── Init ──────────────────────────────────────────────
 // ── Detection History Chart ──────────────────────────
 let historyChart = null;
+let chartPeriod = '24h';
+
+function setChartPeriod(p) {
+  chartPeriod = p;
+  document.querySelectorAll('.chart-period').forEach(b => b.classList.toggle('active', b.dataset.period === p));
+  fetchChartData();
+}
+
 async function fetchChartData() {
   try {
-    const r = await fetch('/api/chart-data');
+    const r = await fetch('/api/chart-data?period=' + chartPeriod);
     const d = await r.json();
     if (d.error) return;
 
@@ -1197,6 +1251,7 @@ async function fetchChartData() {
     if (historyChart) {
       historyChart.data.labels = d.labels;
       historyChart.data.datasets[0].data = d.counts;
+      historyChart.data.datasets[0].backgroundColor = d.counts.map(c => c > 0 ? '#f97316' : 'rgba(255,255,255,0.05)');
       historyChart.update();
     } else {
       historyChart = new Chart(ctx, {
