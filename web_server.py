@@ -157,7 +157,7 @@ def create_app(sound_detector):
             print(f"[MIC] Testing device: {device}")
             audio = sd.rec(int(SAMPLE_RATE * DURATION), samplerate=SAMPLE_RATE,
                           channels=1, dtype=np.float32, device=device)
-            sd.wait(timeout=DURATION + 5)
+            sd.wait()
 
             rms_energy = np.sqrt(np.mean(audio**2))
             peak = np.max(np.abs(audio))
