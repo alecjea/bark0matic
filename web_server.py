@@ -717,6 +717,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             <th>Frequency</th>
             <th>Confidence</th>
             <th>Duration</th>
+            <th>Dog Size</th>
           </tr>
         </thead>
         <tbody id="detections"></tbody>
@@ -895,6 +896,7 @@ async function fetchDetections() {
           ${r.confidence || ''}
         </td>
         <td>${r.duration_seconds || ''}s</td>
+        <td>${r.dog_size || ''}</td>
       </tr>`;
     }).join('');
   } catch(e) { console.error(e); }

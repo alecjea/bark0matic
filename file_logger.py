@@ -8,7 +8,7 @@ from config import Config
 class FileLogger:
     """Logs detection events to a CSV file."""
 
-    HEADER = ["timestamp", "sound_type", "decibels", "frequency_hz", "confidence", "duration_seconds"]
+    HEADER = ["timestamp", "sound_type", "decibels", "frequency_hz", "confidence", "duration_seconds", "dog_size"]
 
     def __init__(self):
         """Initialize the CSV logger."""
@@ -37,6 +37,11 @@ class FileLogger:
         timestamp = now.strftime("%Y-%m-%d %H:%M:%S %Z")
         duration = features.get("duration", 0) if features else 0
 
+        # Determine dog size based on frequency (only for dog bark detection)
+        dog_size = ""
+        if Config.SOUND_TYPE_NAME.lower() in ("dog bark", "dog"):
+            dog_size = "Large dog" if frequency_hz < 2000 else "Small dog"
+
         try:
             with open(self.csv_path, "a", newline="") as f:
                 writer = csv.writer(f)
@@ -47,10 +52,12 @@ class FileLogger:
                     f"{frequency_hz:.0f}",
                     f"{confidence:.3f}",
                     f"{duration:.1f}",
+                    dog_size,
                 ])
+            dog_info = f" | {dog_size}" if dog_size else ""
             print(
                 f"[LOG] {timestamp} | {Config.SOUND_TYPE_NAME} | "
-                f"{decibels:.1f}dB | {frequency_hz:.0f}Hz | conf:{confidence:.2f}"
+                f"{decibels:.1f}dB | {frequency_hz:.0f}Hz | conf:{confidence:.2f}{dog_info}"
             )
         except Exception as e:
             print(f"[ERROR] Failed to log event: {e}")
