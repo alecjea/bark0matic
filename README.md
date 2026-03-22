@@ -11,8 +11,11 @@ Detects sounds (dog barks, music, sirens, and more) through a USB microphone usi
 - **AI Detection** — Google YAMNet (TensorFlow Lite), 521 AudioSet classes, runs fully offline
 - **19 Sound Types** — Dog bark, cat, bird, siren, fire alarm, glass breaking, gunshot, car horn, engine, crying, screaming, thunder, knocking, snoring, coughing, alarm clock, speech, music, and more
 - **Web Dashboard** — Real-time status, settings, detection log, clear log button, CSV download
+- **Detection History Chart** — 24h/week/month bar chart showing detection patterns over time
+- **Dog Size Detection** — Estimates large vs small dog based on bark frequency (< 2000Hz = large)
 - **USB Mic Auto-Detection** — Detect, test, and save microphone via dashboard
-- **CSV Logging** — Timestamped detections with confidence, dB, and frequency
+- **CSV Logging** — Timestamped detections with confidence, dB, frequency, and dog size
+- **Timezone Support** — Configurable local timezone for accurate timestamps
 - **Systemd Service** — Auto-starts on boot, auto-restarts on crash
 - **Adjustable Sensitivity** — Confidence threshold (0.01–1.0), energy threshold, frequency range
 
@@ -78,10 +81,11 @@ Audio is captured using `plughw:X,Y` so ALSA resamples to 16kHz regardless of wh
 Access at `http://<rpi-ip>:8080`
 
 - **Status** — Running/stopped indicator with pulsing dot, detection count, uptime
+- **Detection History** — Bar chart with 24h/week/month toggle to spot patterns
 - **Sound Type** — Switch between 19 categories
 - **Microphone** — Detect, test, and save USB input device
 - **Sensitivity** — Confidence threshold (0.01-1.0), energy threshold sliders
-- **Detection Log** — Live table, clear log button, CSV download
+- **Detection Log** — Live table with dog size column, clear log, CSV download
 - **Guide** — Click ? for help on all settings
 
 ---
@@ -98,7 +102,7 @@ Settings saved to `config.json` (auto-created, not tracked in git):
   "rpi_microphone_rate": 16000,
   "bark_detection_threshold": 0.05,
   "bark_detection_energy_threshold": -70.0,
-  "local_timezone": "UTC"
+  "local_timezone": "Australia/Melbourne"
 }
 ```
 
