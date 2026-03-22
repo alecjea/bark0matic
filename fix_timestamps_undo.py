@@ -35,10 +35,9 @@ with open(CSV_PATH, "r", newline="") as f:
             # Parse the AEDT timestamp as naive, subtract 11 hours
             clean = ts.replace(" AEDT", "").replace(" AEST", "").replace(" UTC", "").strip()
             dt = datetime.strptime(clean, "%Y-%m-%d %H:%M:%S")
-            dt = dt - timedelta(hours=44)
-            # Now dt is the correct UTC time, convert to Melbourne
-            dt = dt.replace(tzinfo=ZoneInfo("UTC")).astimezone(MELB)
-            row["timestamp"] = dt.strftime("%Y-%m-%d %H:%M:%S %Z")
+            dt = dt - timedelta(hours=11)
+            # Already in AEDT after subtraction, just label it
+            row["timestamp"] = dt.strftime("%Y-%m-%d %H:%M:%S") + " AEDT"
             fixed += 1
         except Exception as e:
             print(f"  Skip: {ts!r} ({e})")
