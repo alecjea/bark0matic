@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Rewrite detections.csv: fix timestamps and add dog_size column.
-Run once after changing your timezone setting.
+Only converts timestamps that are NOT already in AEDT/AEST.
 
 Usage:
     python3 fix_timestamps.py
@@ -18,43 +18,15 @@ LOCAL_TZ = ZoneInfo(LOCAL_TZ_NAME)
 
 CSV_PATH = os.path.join(os.path.dirname(__file__), "detections.csv")
 BACKUP_PATH = CSV_PATH + ".bak"
-
 NEW_HEADER = ["timestamp", "sound_type", "decibels", "frequency_hz", "confidence", "duration_seconds", "dog_size"]
 
-TIMESTAMP_FORMATS = [
-    "%Y-%m-%d %H:%M:%S %Z",
-    "%Y-%m-%d %H:%M:%S UTC",
-    "%Y-%m-%d %H:%M:%S AEST",
-    "%Y-%m-%d %H:%M:%S AEDT",
-    "%Y-%m-%d %H:%M:%S",
-]
-
-def parse_timestamp(ts):
-    for fmt in TIMESTAMP_FORMATS:
-        try:
-            dt = datetime.strptime(ts.strip(), fmt)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            return dt
-        except ValueError:
-            continue
-    return None
-
-def get_dog_size(sound_type, frequency_hz):
-    """Return dog size based on frequency. Only for dog bark detections."""
-    if sound_type and sound_type.lower() in ("dog bark", "dog"):
-        try:
-            freq = float(frequency_hz)
-            return "Large dog" if freq < 2000 else "Small dog"
-        except (ValueError, TypeError):
-            pass
-    return ""
+# Timezone abbreviations that mean "already local" — skip these
+ALREADY_LOCAL = {"AEDT", "AEST"}
 
 if not os.path.exists(CSV_PATH):
     print(f"No CSV found at {CSV_PATH}")
     sys.exit(1)
 
-# Backup first
 with open(CSV_PATH, "r") as f:
     original = f.read()
 with open(BACKUP_PATH, "w") as f:
@@ -69,23 +41,36 @@ skipped = 0
 with open(CSV_PATH, "r", newline="") as f:
     reader = csv.DictReader(f)
     for row in reader:
-        # Fix timestamp
-        ts = row.get("timestamp", "")
-        dt = parse_timestamp(ts)
-        if dt:
-            local_dt = dt.astimezone(LOCAL_TZ)
-            row["timestamp"] = local_dt.strftime("%Y-%m-%d %H:%M:%S %Z")
-            ts_updated += 1
+        ts = row.get("timestamp", "").strip()
+
+        # Skip if already in local timezone
+        already_local = any(ts.endswith(tz) for tz in ALREADY_LOCAL)
+
+        if not already_local:
+            try:
+                clean = ts.replace(" UTC", "").strip()
+                dt = datetime.strptime(clean, "%Y-%m-%d %H:%M:%S")
+                dt = dt.replace(tzinfo=timezone.utc).astimezone(LOCAL_TZ)
+                row["timestamp"] = dt.strftime("%Y-%m-%d %H:%M:%S %Z")
+                ts_updated += 1
+            except Exception:
+                print(f"  Could not parse: {ts!r} — left unchanged")
+                skipped += 1
         else:
-            print(f"  Could not parse: {ts!r} — left unchanged")
             skipped += 1
 
-        # Add dog_size if missing or empty
+        # Add dog_size if missing
         if not row.get("dog_size"):
-            dog_size = get_dog_size(row.get("sound_type", ""), row.get("frequency_hz", ""))
-            row["dog_size"] = dog_size
-            if dog_size:
-                dog_updated += 1
+            sound = row.get("sound_type", "").lower()
+            if sound in ("dog bark", "dog"):
+                try:
+                    freq = float(row.get("frequency_hz", 0))
+                    row["dog_size"] = "Large dog" if freq < 2000 else "Small dog"
+                    dog_updated += 1
+                except (ValueError, TypeError):
+                    row["dog_size"] = ""
+            else:
+                row["dog_size"] = ""
 
         rows.append(row)
 
@@ -94,4 +79,4 @@ with open(CSV_PATH, "w", newline="") as f:
     writer.writeheader()
     writer.writerows(rows)
 
-print(f"Done. {ts_updated} timestamps converted to {LOCAL_TZ_NAME}, {dog_updated} dog sizes added, {skipped} skipped.")
+print(f"Done. {ts_updated} timestamps converted, {dog_updated} dog sizes added, {skipped} already local/skipped.")
