@@ -84,6 +84,19 @@ echo ""
 # ────────────────────────────────────────────────────────────
 echo -e "${YELLOW}[5/8] Installing Python dependencies...${NC}"
 pip install --break-system-packages -q -r requirements.txt 2>/dev/null || pip install --break-system-packages -r requirements.txt
+
+# ai-edge-litert only publishes aarch64 wheels — skip on 32-bit ARM
+ARCH=$(dpkg --print-architecture 2>/dev/null || uname -m)
+if [ "$ARCH" = "arm64" ] || [ "$ARCH" = "aarch64" ]; then
+  echo "  Installing ai-edge-litert (YAMNet TFLite runtime)..."
+  pip install --break-system-packages -q ai-edge-litert 2>/dev/null \
+    || pip install --break-system-packages ai-edge-litert \
+    || echo -e "  ${YELLOW}⚠ ai-edge-litert install failed — app will use heuristic classifier${NC}"
+else
+  echo -e "  ${YELLOW}⚠ Skipping ai-edge-litert (not supported on $ARCH — 64-bit OS required)${NC}"
+  echo -e "  ${YELLOW}  App will run with heuristic classifier instead of YAMNet${NC}"
+fi
+
 echo -e "${GREEN}✓ Dependencies installed${NC}"
 echo ""
 
