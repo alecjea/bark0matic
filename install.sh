@@ -33,8 +33,8 @@ echo ""
 # ────────────────────────────────────────────────────────────
 # Step 2: Install Python and pip
 # ────────────────────────────────────────────────────────────
-echo -e "${YELLOW}[2/8] Installing Python 3, pip, and audio libraries...${NC}"
-sudo apt-get install -y -qq python3 python3-pip python3-full libportaudio2
+echo -e "${YELLOW}[2/8] Installing git, Python 3, pip, and audio libraries...${NC}"
+sudo apt-get install -y -qq git python3 python3-pip python3-full libportaudio2 alsa-utils
 PYTHON_VERSION=$(python3 --version 2>&1)
 echo -e "${GREEN}✓ $PYTHON_VERSION installed${NC}"
 echo ""
