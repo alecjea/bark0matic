@@ -73,6 +73,8 @@ def create_app(sound_detector):
             Config.BARK_DETECTION_ENERGY_THRESHOLD = float(data["energy_threshold"])
         if "chunk_size" in data:
             Config.BARK_DETECTION_CHUNK_SIZE = float(data["chunk_size"])
+        if "dog_size_frequency_threshold" in data:
+            Config.DOG_SIZE_FREQUENCY_THRESHOLD = int(data["dog_size_frequency_threshold"])
         if "sound_type_name" in data:
             Config.SOUND_TYPE_NAME = data["sound_type_name"]
             # Find matching indices
@@ -767,6 +769,18 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           <span>Quieter sounds</span><span>Louder only</span>
         </div>
       </div>
+      <div class="field" id="dog-size-field" style="display:none;">
+        <label>Large / Small Dog Threshold (Hz)</label>
+        <div class="range-row">
+          <input type="range" id="dog_size_frequency_threshold" min="500" max="4000" step="100"
+                 oninput="updateDogSizeLabel(this.value)">
+          <span class="range-val" id="dog-size-val">2000Hz</span>
+        </div>
+        <div style="display:flex; justify-content:space-between; font-size:0.65rem; color:var(--text-dim); margin-top:2px;">
+          <span>&#x1F436; Large dog (&lt; <span id="dog-size-hz">2000</span>Hz)</span>
+          <span>Small dog (&gt; <span id="dog-size-hz2">2000</span>Hz) &#x1F436;</span>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -1052,6 +1066,12 @@ async function loadSettings() {
     document.getElementById('energy_threshold').value = d.energy_threshold;
     document.getElementById('energy-val').textContent = d.energy_threshold + 'dB';
 
+    // Dog size slider (only relevant for dog bark)
+    const dsVal = d.dog_size_frequency_threshold || 2000;
+    document.getElementById('dog_size_frequency_threshold').value = dsVal;
+    updateDogSizeLabel(dsVal);
+    toggleDogSizeField(d.sound_type_name);
+
     // Advanced fields
     document.getElementById('min_frequency').value = d.min_frequency;
     document.getElementById('max_frequency').value = d.max_frequency;
@@ -1068,10 +1088,21 @@ async function loadSettings() {
   } catch(e) { console.error(e); }
 }
 
+function updateDogSizeLabel(hz) {
+  document.getElementById('dog-size-val').textContent = hz + 'Hz';
+  document.getElementById('dog-size-hz').textContent = hz;
+  document.getElementById('dog-size-hz2').textContent = hz;
+}
+
+function toggleDogSizeField(soundTypeName) {
+  const isDog = (soundTypeName || '').toLowerCase().includes('dog');
+  document.getElementById('dog-size-field').style.display = isDog ? '' : 'none';
+}
+
 function soundTypeChanged() {
-  // Immediately show feedback
   const name = document.getElementById('sound_type').value;
   document.getElementById('sound-type').textContent = name;
+  toggleDogSizeField(name);
 }
 
 async function saveSettings() {
@@ -1083,6 +1114,7 @@ async function saveSettings() {
     chunk_size: parseFloat(document.getElementById('chunk_size').value),
     local_timezone: document.getElementById('local_timezone').value.trim(),
     sound_type_name: document.getElementById('sound_type').value,
+    dog_size_frequency_threshold: parseInt(document.getElementById('dog_size_frequency_threshold').value),
   };
   try {
     await fetch('/api/settings', {

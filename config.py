@@ -29,6 +29,9 @@ class Config:
     BARK_DETECTION_MIN_DURATION = 0.5
     BARK_DETECTION_ENERGY_THRESHOLD = -60
 
+    # Dog size classification
+    DOG_SIZE_FREQUENCY_THRESHOLD = 2000  # Hz — below = large dog, above = small dog
+
     # Logging
     LOG_FILE_PATH = str(Path(__file__).parent / "detections.csv")
     BACKUP_LOG_FILE = "/tmp/barkomatic_backup.json"
@@ -73,6 +76,7 @@ class Config:
             "bark_detection_max_frequency": cls.BARK_DETECTION_MAX_FREQUENCY,
             "bark_detection_min_duration": cls.BARK_DETECTION_MIN_DURATION,
             "bark_detection_energy_threshold": cls.BARK_DETECTION_ENERGY_THRESHOLD,
+            "dog_size_frequency_threshold": cls.DOG_SIZE_FREQUENCY_THRESHOLD,
             "log_file_path": cls.LOG_FILE_PATH,
             "web_port": cls.WEB_PORT,
         }
@@ -104,6 +108,7 @@ class Config:
             "max_frequency": cls.BARK_DETECTION_MAX_FREQUENCY,
             "energy_threshold": cls.BARK_DETECTION_ENERGY_THRESHOLD,
             "chunk_size": cls.BARK_DETECTION_CHUNK_SIZE,
+            "dog_size_frequency_threshold": cls.DOG_SIZE_FREQUENCY_THRESHOLD,
             "web_port": cls.WEB_PORT,
         }
 

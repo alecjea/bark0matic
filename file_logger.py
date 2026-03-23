@@ -44,7 +44,7 @@ class FileLogger:
         # Determine dog size based on frequency (only for dog bark detection)
         dog_size = ""
         if Config.SOUND_TYPE_NAME.lower() in ("dog bark", "dog"):
-            dog_size = "Large dog" if frequency_hz < 2000 else "Small dog"
+            dog_size = "Large dog" if frequency_hz < Config.DOG_SIZE_FREQUENCY_THRESHOLD else "Small dog"
 
         # Build full JSON payload
         payload = {
