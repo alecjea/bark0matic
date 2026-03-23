@@ -29,6 +29,8 @@ Detects sounds (dog barks, music, sirens, and more) through a USB microphone usi
 
 ## Quick Install (Fresh Raspberry Pi)
 
+> **Requires Raspberry Pi OS 64-bit (arm64).** The AI/YAMNet runtime (`ai-edge-litert`) only publishes 64-bit wheels. The installer will detect 32-bit OS and exit with a clear message before anything is installed. Use the [Raspberry Pi Imager](https://www.raspberrypi.com/software/) and choose **Raspberry Pi OS (64-bit)**.
+
 **One line:**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/alecjea/bark0matic/master/install.sh | bash
@@ -44,9 +46,11 @@ bash install.sh
 Then open: `http://<rpi-ip>:8080`
 
 The installer:
-- Installs Python 3, pip, and audio libraries (ALSA)
+- Checks architecture — exits immediately on non-arm64 with instructions to switch to 64-bit OS
+- Installs git, Python 3, pip, and audio libraries (ALSA/arecord)
 - Configures UFW firewall (ports 22 and 8080)
-- Installs Python dependencies
+- Installs Python dependencies including the YAMNet TFLite runtime
+- Downloads and SHA-256 verifies the YAMNet model files
 - Creates and starts a systemd service (auto-start on boot)
 
 ---
@@ -64,8 +68,8 @@ Pulls latest from master and restarts the service.
 
 ## Requirements
 
-- Raspberry Pi 3, 4, or 5 (or any Linux with Python 3.7+)
-- USB microphone
+- Raspberry Pi 3, 4, or 5 running **Raspberry Pi OS 64-bit (arm64)**
+- USB microphone (or ReSpeaker 2-Mic Pi HAT)
 - ~500MB free disk space
 - Internet connection for initial install
 

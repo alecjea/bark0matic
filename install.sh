@@ -5,6 +5,7 @@
 # ============================================================
 # Complete setup from zero to running web dashboard
 # Run with: bash install.sh
+# Requires: Raspberry Pi OS 64-bit (arm64)
 
 set -e
 
@@ -23,26 +24,57 @@ echo "╚═══════════════════════�
 echo -e "${NC}"
 
 # ────────────────────────────────────────────────────────────
-# Step 1: Update package lists
+# Step 1: Architecture check
 # ────────────────────────────────────────────────────────────
-echo -e "${YELLOW}[1/8] Updating package lists...${NC}"
+echo -e "${YELLOW}[1/9] Checking system architecture...${NC}"
+
+ARCH=$(dpkg --print-architecture 2>/dev/null || uname -m)
+
+if [ "$ARCH" != "arm64" ] && [ "$ARCH" != "aarch64" ]; then
+  echo -e "${RED}"
+  echo "╔════════════════════════════════════════════════════════╗"
+  echo "║                  ✗ UNSUPPORTED PLATFORM                ║"
+  echo "╚════════════════════════════════════════════════════════╝"
+  echo -e "${NC}"
+  echo -e "${RED}Architecture detected: $ARCH${NC}"
+  echo ""
+  echo "Barkomatic's AI/YAMNet mode requires a 64-bit operating system."
+  echo "The ai-edge-litert package (TFLite runtime) only publishes"
+  echo "aarch64 wheels and does not support 32-bit ARM (armhf)."
+  echo ""
+  echo "To fix this, reinstall with Raspberry Pi OS 64-bit:"
+  echo -e "  ${BLUE}https://www.raspberrypi.com/software/${NC}"
+  echo ""
+  echo "On the Raspberry Pi Imager, choose:"
+  echo "  Raspberry Pi OS (64-bit)"
+  echo ""
+  exit 1
+fi
+
+echo -e "${GREEN}✓ Architecture: $ARCH (supported)${NC}"
+echo ""
+
+# ────────────────────────────────────────────────────────────
+# Step 2: Update package lists
+# ────────────────────────────────────────────────────────────
+echo -e "${YELLOW}[2/9] Updating package lists...${NC}"
 sudo apt-get update -qq
 echo -e "${GREEN}✓ Package lists updated${NC}"
 echo ""
 
 # ────────────────────────────────────────────────────────────
-# Step 2: Install Python and pip
+# Step 3: Install system packages
 # ────────────────────────────────────────────────────────────
-echo -e "${YELLOW}[2/8] Installing git, Python 3, pip, and audio libraries...${NC}"
+echo -e "${YELLOW}[3/9] Installing git, Python 3, pip, and audio libraries...${NC}"
 sudo apt-get install -y -qq git python3 python3-pip python3-full libportaudio2 alsa-utils
 PYTHON_VERSION=$(python3 --version 2>&1)
 echo -e "${GREEN}✓ $PYTHON_VERSION installed${NC}"
 echo ""
 
 # ────────────────────────────────────────────────────────────
-# Step 3: Install and configure UFW firewall
+# Step 4: Install and configure UFW firewall
 # ────────────────────────────────────────────────────────────
-echo -e "${YELLOW}[3/8] Setting up firewall (UFW)...${NC}"
+echo -e "${YELLOW}[4/9] Setting up firewall (UFW)...${NC}"
 sudo apt-get install -y -qq ufw
 
 # Enable UFW without prompting
@@ -60,9 +92,9 @@ echo "  - Barkomatic (port 8080) allowed"
 echo ""
 
 # ────────────────────────────────────────────────────────────
-# Step 4: Clone or update repository
+# Step 5: Clone or update repository
 # ────────────────────────────────────────────────────────────
-echo -e "${YELLOW}[4/8] Cloning Barkomatic repository...${NC}"
+echo -e "${YELLOW}[5/9] Cloning Barkomatic repository...${NC}"
 
 if [ -d "$HOME/bark0matic" ]; then
   echo "  Repository already exists, updating..."
@@ -80,30 +112,18 @@ echo -e "${GREEN}✓ Repository ready at $HOME/bark0matic${NC}"
 echo ""
 
 # ────────────────────────────────────────────────────────────
-# Step 5: Install Python dependencies
+# Step 6: Install Python dependencies
 # ────────────────────────────────────────────────────────────
-echo -e "${YELLOW}[5/8] Installing Python dependencies...${NC}"
+echo -e "${YELLOW}[6/9] Installing Python dependencies...${NC}"
 pip install --break-system-packages -q -r requirements.txt 2>/dev/null || pip install --break-system-packages -r requirements.txt
-
-# ai-edge-litert only publishes aarch64 wheels — skip on 32-bit ARM
-ARCH=$(dpkg --print-architecture 2>/dev/null || uname -m)
-if [ "$ARCH" = "arm64" ] || [ "$ARCH" = "aarch64" ]; then
-  echo "  Installing ai-edge-litert (YAMNet TFLite runtime)..."
-  pip install --break-system-packages -q ai-edge-litert 2>/dev/null \
-    || pip install --break-system-packages ai-edge-litert \
-    || echo -e "  ${YELLOW}⚠ ai-edge-litert install failed — app will use heuristic classifier${NC}"
-else
-  echo -e "  ${YELLOW}⚠ Skipping ai-edge-litert (not supported on $ARCH — 64-bit OS required)${NC}"
-  echo -e "  ${YELLOW}  App will run with heuristic classifier instead of YAMNet${NC}"
-fi
-
+pip install --break-system-packages -q ai-edge-litert 2>/dev/null || pip install --break-system-packages ai-edge-litert
 echo -e "${GREEN}✓ Dependencies installed${NC}"
 echo ""
 
 # ────────────────────────────────────────────────────────────
-# Step 6: Download and verify YAMNet model files
+# Step 7: Download and verify YAMNet model files
 # ────────────────────────────────────────────────────────────
-echo -e "${YELLOW}[6/8] Downloading YAMNet model files...${NC}"
+echo -e "${YELLOW}[7/9] Downloading YAMNet model files...${NC}"
 
 MODELS_DIR="$HOME/bark0matic/models"
 mkdir -p "$MODELS_DIR"
@@ -152,9 +172,9 @@ download_and_verify "$YAMNET_CLASS_MAP_URL" "$MODELS_DIR/yamnet_class_map.csv"  
 echo ""
 
 # ────────────────────────────────────────────────────────────
-# Step 7: Optional ReSpeaker HAT setup
+# Step 8: Optional ReSpeaker HAT setup
 # ────────────────────────────────────────────────────────────
-echo -e "${YELLOW}[7/9] ReSpeaker 2-Mic HAT setup (optional)...${NC}"
+echo -e "${YELLOW}[8/9] ReSpeaker 2-Mic HAT setup (optional)...${NC}"
 echo ""
 read -p "  Do you have a ReSpeaker 2-Mic Pi HAT attached? [y/N] " -n 1 -r RESPEAKER_REPLY
 echo ""
@@ -193,9 +213,9 @@ fi
 echo ""
 
 # ────────────────────────────────────────────────────────────
-# Step 7: Optional systemd service setup
+# Step 9: Systemd service setup
 # ────────────────────────────────────────────────────────────
-echo -e "${YELLOW}[8/9] Setting up systemd service (auto-start on boot)...${NC}"
+echo -e "${YELLOW}[9/9] Setting up systemd service (auto-start on boot)...${NC}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -228,11 +248,8 @@ echo "  - Service is now running"
 echo ""
 
 # ────────────────────────────────────────────────────────────
-# Step 8: Summary and next steps
+# Done
 # ────────────────────────────────────────────────────────────
-echo -e "${YELLOW}[9/9] Setup complete!${NC}"
-echo ""
-
 echo -e "${GREEN}════════════════════════════════════════════════════════${NC}"
 echo -e "${GREEN}✓ BARKOMATIC IS READY!${NC}"
 echo -e "${GREEN}════════════════════════════════════════════════════════${NC}"
