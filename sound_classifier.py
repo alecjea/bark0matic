@@ -1,6 +1,6 @@
 """Sound classification using YAMNet TFLite model."""
 import csv
-import urllib.request
+import hashlib
 import numpy as np
 from pathlib import Path
 
@@ -22,10 +22,21 @@ except ImportError:
 
 from config import Config
 
-YAMNET_MODEL_URL = "https://storage.googleapis.com/download.tensorflow.org/models/tflite/task_library/audio_classification/android/lite-model_yamnet_classification_tflite_1.tflite"
-YAMNET_CLASS_MAP_URL = "https://raw.githubusercontent.com/tensorflow/models/master/research/audioset/yamnet/yamnet_class_map.csv"
 YAMNET_SAMPLE_RATE = 16000
 MODEL_DIR = Path(__file__).parent / "models"
+
+# Pinned SHA-256 hashes — files must match exactly before being loaded
+YAMNET_MODEL_SHA256     = "10c95ea3eb9a7bb4cb8bddf6feb023250381008177ac162ce169694d05c317de"
+YAMNET_CLASS_MAP_SHA256 = "cdf24d193e196d9e95912a2667051ae203e92a2ba09449218ccb40ef787c6df2"
+
+
+def _sha256_file(path: Path) -> str:
+    """Return lowercase hex SHA-256 of a file."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 class SoundClassifier:
@@ -42,26 +53,36 @@ class SoundClassifier:
         else:
             print("[WARN] Running without YAMNet — install ai-edge-litert")
 
+    def _verify_file(self, path: Path, expected_sha256: str, label: str) -> bool:
+        """Return True if file exists and matches expected SHA-256, else log and return False."""
+        if not path.exists():
+            print(f"[ERROR] {label} not found at {path}")
+            print(f"[ERROR] Run install.sh to download model files")
+            return False
+        actual = _sha256_file(path)
+        if actual.lower() != expected_sha256.lower():
+            print(f"[ERROR] {label} hash mismatch!")
+            print(f"[ERROR]   expected: {expected_sha256}")
+            print(f"[ERROR]   actual:   {actual}")
+            print(f"[ERROR] Delete {path} and re-run install.sh")
+            return False
+        return True
+
     def _load_model(self):
-        """Download and load YAMNet TFLite model with retry and validation."""
-        MODEL_DIR.mkdir(parents=True, exist_ok=True)
-        model_path = MODEL_DIR / "yamnet.tflite"
+        """Verify and load YAMNet TFLite model from local files only."""
+        model_path     = MODEL_DIR / "yamnet.tflite"
         class_map_path = MODEL_DIR / "yamnet_class_map.csv"
 
-        # Download model with retry and validation
-        self._download_with_retry(
-            YAMNET_MODEL_URL, model_path,
-            "YAMNet TFLite model (~3MB)", min_size=2_000_000
-        )
-        self._download_with_retry(
-            YAMNET_CLASS_MAP_URL, class_map_path,
-            "YAMNet class map", min_size=1000
-        )
+        if not self._verify_file(model_path, YAMNET_MODEL_SHA256, "YAMNet model"):
+            print("[WARN] Falling back to heuristic classifier")
+            return
+        if not self._verify_file(class_map_path, YAMNET_CLASS_MAP_SHA256, "YAMNet class map"):
+            print("[WARN] Falling back to heuristic classifier")
+            return
 
         try:
             self.interpreter = tflite.Interpreter(model_path=str(model_path))
             self.interpreter.allocate_tensors()
-
             self._log_target_classes(class_map_path)
             print(
                 f"[INFO] YAMNet loaded. Detecting: {Config.SOUND_TYPE_NAME} "
@@ -69,48 +90,7 @@ class SoundClassifier:
             )
         except Exception as e:
             print(f"[ERROR] Failed to load YAMNet: {e}")
-            # Model file might be corrupt — delete it so next run re-downloads
-            if model_path.exists():
-                model_path.unlink()
-                print("[INFO] Removed corrupt model file — will re-download on next start")
             self.interpreter = None
-
-    def _download_with_retry(self, url, dest, label, min_size=0, retries=3):
-        """Download a file with retry logic and size validation."""
-        if dest.exists() and dest.stat().st_size >= min_size:
-            return  # Already have a valid file
-
-        # Remove partial/corrupt file
-        if dest.exists():
-            print(f"[INFO] Removing invalid {dest.name} ({dest.stat().st_size} bytes)")
-            dest.unlink()
-
-        for attempt in range(1, retries + 1):
-            try:
-                print(f"[INFO] Downloading {label} (attempt {attempt}/{retries})...")
-                tmp_path = dest.with_suffix(".tmp")
-                urllib.request.urlretrieve(url, tmp_path)
-
-                # Validate file size
-                if tmp_path.stat().st_size < min_size:
-                    print(f"[WARN] Download too small ({tmp_path.stat().st_size} bytes), retrying...")
-                    tmp_path.unlink()
-                    continue
-
-                # Rename to final path (atomic on same filesystem)
-                tmp_path.rename(dest)
-                print(f"[INFO] Downloaded {label}")
-                return
-
-            except Exception as e:
-                print(f"[WARN] Download failed (attempt {attempt}): {e}")
-                # Clean up partial file
-                tmp_path = dest.with_suffix(".tmp")
-                if tmp_path.exists():
-                    tmp_path.unlink()
-
-        print(f"[ERROR] Failed to download {label} after {retries} attempts")
-        print(f"[ERROR] URL: {url}")
 
     def _log_target_classes(self, class_map_path):
         """Log the target class names from the class map."""

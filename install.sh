@@ -88,9 +88,60 @@ echo -e "${GREEN}✓ Dependencies installed${NC}"
 echo ""
 
 # ────────────────────────────────────────────────────────────
-# Step 6: Optional ReSpeaker HAT setup
+# Step 6: Download and verify YAMNet model files
 # ────────────────────────────────────────────────────────────
-echo -e "${YELLOW}[6/8] ReSpeaker 2-Mic HAT setup (optional)...${NC}"
+echo -e "${YELLOW}[6/8] Downloading YAMNet model files...${NC}"
+
+MODELS_DIR="$HOME/bark0matic/models"
+mkdir -p "$MODELS_DIR"
+
+YAMNET_MODEL_URL="https://storage.googleapis.com/download.tensorflow.org/models/tflite/task_library/audio_classification/android/lite-model_yamnet_classification_tflite_1.tflite"
+YAMNET_CLASS_MAP_URL="https://raw.githubusercontent.com/tensorflow/models/master/research/audioset/yamnet/yamnet_class_map.csv"
+YAMNET_MODEL_SHA256="10c95ea3eb9a7bb4cb8bddf6feb023250381008177ac162ce169694d05c317de"
+YAMNET_CLASS_MAP_SHA256="cdf24d193e196d9e95912a2667051ae203e92a2ba09449218ccb40ef787c6df2"
+
+download_and_verify() {
+  local url="$1"
+  local dest="$2"
+  local expected_sha256="$3"
+  local label="$4"
+
+  # Skip if already present and verified
+  if [ -f "$dest" ]; then
+    actual=$(sha256sum "$dest" | awk '{print $1}')
+    if [ "$actual" = "$expected_sha256" ]; then
+      echo -e "  ${GREEN}✓ $label already verified${NC}"
+      return 0
+    else
+      echo "  Existing $label has wrong hash, re-downloading..."
+      rm -f "$dest"
+    fi
+  fi
+
+  echo "  Downloading $label..."
+  wget -q -O "$dest.tmp" "$url" || curl -fsSL -o "$dest.tmp" "$url"
+
+  actual=$(sha256sum "$dest.tmp" | awk '{print $1}')
+  if [ "$actual" != "$expected_sha256" ]; then
+    rm -f "$dest.tmp"
+    echo -e "${RED}✗ $label hash mismatch — aborting install${NC}"
+    echo "  Expected: $expected_sha256"
+    echo "  Got:      $actual"
+    exit 1
+  fi
+
+  mv "$dest.tmp" "$dest"
+  echo -e "  ${GREEN}✓ $label downloaded and verified${NC}"
+}
+
+download_and_verify "$YAMNET_MODEL_URL"     "$MODELS_DIR/yamnet.tflite"         "$YAMNET_MODEL_SHA256"     "YAMNet TFLite model"
+download_and_verify "$YAMNET_CLASS_MAP_URL" "$MODELS_DIR/yamnet_class_map.csv"  "$YAMNET_CLASS_MAP_SHA256" "YAMNet class map"
+echo ""
+
+# ────────────────────────────────────────────────────────────
+# Step 7: Optional ReSpeaker HAT setup
+# ────────────────────────────────────────────────────────────
+echo -e "${YELLOW}[7/9] ReSpeaker 2-Mic HAT setup (optional)...${NC}"
 echo ""
 read -p "  Do you have a ReSpeaker 2-Mic Pi HAT attached? [y/N] " -n 1 -r RESPEAKER_REPLY
 echo ""
@@ -131,7 +182,7 @@ echo ""
 # ────────────────────────────────────────────────────────────
 # Step 7: Optional systemd service setup
 # ────────────────────────────────────────────────────────────
-echo -e "${YELLOW}[7/8] Setting up systemd service (auto-start on boot)...${NC}"
+echo -e "${YELLOW}[8/9] Setting up systemd service (auto-start on boot)...${NC}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -166,7 +217,7 @@ echo ""
 # ────────────────────────────────────────────────────────────
 # Step 8: Summary and next steps
 # ────────────────────────────────────────────────────────────
-echo -e "${YELLOW}[8/8] Setup complete!${NC}"
+echo -e "${YELLOW}[9/9] Setup complete!${NC}"
 echo ""
 
 echo -e "${GREEN}════════════════════════════════════════════════════════${NC}"
