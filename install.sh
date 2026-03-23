@@ -77,14 +77,12 @@ echo ""
 echo -e "${YELLOW}[4/9] Setting up firewall (UFW)...${NC}"
 sudo apt-get install -y -qq ufw
 
-# Enable UFW without prompting
-echo "y" | sudo ufw enable > /dev/null 2>&1 || true
-
-# Allow SSH (important!)
+# Add allow rules BEFORE enabling so a remote SSH session is never locked out
 sudo ufw allow 22/tcp > /dev/null 2>&1 || true
-
-# Allow Barkomatic web port
 sudo ufw allow 8080/tcp > /dev/null 2>&1 || true
+
+# Enable UFW without prompting (rules are already in place)
+echo "y" | sudo ufw enable > /dev/null 2>&1 || true
 
 echo -e "${GREEN}✓ Firewall configured${NC}"
 echo "  - SSH (port 22) allowed"
