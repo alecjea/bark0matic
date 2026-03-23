@@ -190,13 +190,17 @@ class AudioProcessor:
 
             mfcc_mean = np.zeros(13)
 
+            rms = float(np.sqrt(np.mean(normalized ** 2)))
             return {
                 "decibels": float(decibels),
+                "rms_energy": round(rms, 6),
                 "zcr_mean": float(zcr_mean),
                 "spec_centroid_mean": float(spec_centroid_mean),
                 "spec_rolloff_mean": float(spec_rolloff_mean),
                 "mfcc_mean": mfcc_mean.tolist(),
                 "duration": float(len(audio) / self.sample_rate),
+                "sample_rate": self.sample_rate,
+                "samples": len(audio),
             }
         except Exception as e:
             print(f"[ERROR] Feature extraction failed: {e}")

@@ -177,13 +177,14 @@ class SoundClassifier:
                     else 0.0
                 )
                 is_match = confidence >= self.threshold
-                return is_match, confidence, frequency
+                return is_match, confidence, frequency, mean_scores.tolist()
 
             except Exception as e:
                 print(f"[ERROR] YAMNet inference failed: {e}")
-                return False, 0.0, frequency
+                return False, 0.0, frequency, []
 
-        return self._heuristic_classify(features)
+        is_match, confidence, frequency = self._heuristic_classify(features)
+        return is_match, confidence, frequency, []
 
     def _heuristic_classify(self, features):
         """Fallback heuristic classifier when YAMNet is unavailable."""

@@ -1,5 +1,6 @@
 """CSV file logger for sound detection events."""
 import csv
+import json
 import os
 from datetime import datetime
 from config import Config
@@ -8,7 +9,7 @@ from config import Config
 class FileLogger:
     """Logs detection events to a CSV file."""
 
-    HEADER = ["timestamp", "sound_type", "decibels", "frequency_hz", "confidence", "duration_seconds", "dog_size", "audio_file"]
+    HEADER = ["timestamp", "sound_type", "decibels", "rms_energy", "frequency_hz", "confidence", "duration_seconds", "dog_size", "audio_file", "json_payload"]
 
     def __init__(self):
         """Initialize the CSV logger."""
@@ -23,7 +24,7 @@ class FileLogger:
                 writer = csv.writer(f)
                 writer.writerow(self.HEADER)
 
-    def log_event(self, decibels, frequency_hz, confidence, features, audio_file=""):
+    def log_event(self, decibels, frequency_hz, confidence, features, audio_file="", yamnet_scores=None):
         """
         Log a detected sound event.
 
@@ -33,15 +34,41 @@ class FileLogger:
             confidence: Detection confidence 0-1
             features: Raw audio features dict
             audio_file: Filename of saved audio clip (optional)
+            yamnet_scores: Full YAMNet score array (optional)
         """
         now = datetime.now(Config.get_timezone())
         timestamp = now.strftime("%Y-%m-%d %H:%M:%S %Z")
         duration = features.get("duration", 0) if features else 0
+        rms_energy = features.get("rms_energy", 0) if features else 0
 
         # Determine dog size based on frequency (only for dog bark detection)
         dog_size = ""
         if Config.SOUND_TYPE_NAME.lower() in ("dog bark", "dog"):
             dog_size = "Large dog" if frequency_hz < 2000 else "Small dog"
+
+        # Build full JSON payload
+        payload = {
+            "timestamp": timestamp,
+            "sound_type": Config.SOUND_TYPE_NAME,
+            "confidence": round(confidence, 4),
+            "decibels": round(decibels, 2),
+            "rms_energy": rms_energy,
+            "frequency_hz": round(frequency_hz, 1),
+            "duration_seconds": round(duration, 2),
+            "dog_size": dog_size,
+            "audio_file": audio_file,
+            "features": {k: v for k, v in (features or {}).items() if k != "mfcc_mean"},
+            "threshold_used": Config.BARK_DETECTION_THRESHOLD,
+            "energy_threshold_used": Config.BARK_DETECTION_ENERGY_THRESHOLD,
+            "yamnet_top10": [],
+        }
+
+        # Add top 10 YAMNet scores with indices
+        if yamnet_scores:
+            top10 = sorted(enumerate(yamnet_scores), key=lambda x: x[1], reverse=True)[:10]
+            payload["yamnet_top10"] = [{"index": i, "score": round(s, 4)} for i, s in top10]
+
+        payload_json = json.dumps(payload, separators=(",", ":"))
 
         try:
             # Read existing content
@@ -50,7 +77,17 @@ class FileLogger:
                 with open(self.csv_path, "r", newline="") as f:
                     lines = f.readlines()
 
-            new_row = f"{timestamp},{Config.SOUND_TYPE_NAME},{decibels:.1f},{frequency_hz:.0f},{confidence:.3f},{duration:.1f},{dog_size},{audio_file}\n"
+            # Use csv writer to handle JSON with commas/quotes safely
+            import io
+            row_buf = io.StringIO()
+            writer = csv.writer(row_buf)
+            writer.writerow([
+                timestamp, Config.SOUND_TYPE_NAME,
+                f"{decibels:.1f}", f"{rms_energy:.6f}", f"{frequency_hz:.0f}",
+                f"{confidence:.3f}", f"{duration:.1f}", dog_size, audio_file,
+                payload_json
+            ])
+            new_row = row_buf.getvalue()
 
             # Write header + new row at top + rest
             with open(self.csv_path, "w", newline="") as f:
@@ -61,10 +98,11 @@ class FileLogger:
                 else:
                     f.write(",".join(self.HEADER) + "\n")
                     f.write(new_row)
+
             dog_info = f" | {dog_size}" if dog_size else ""
             print(
                 f"[LOG] {timestamp} | {Config.SOUND_TYPE_NAME} | "
-                f"{decibels:.1f}dB | {frequency_hz:.0f}Hz | conf:{confidence:.2f}{dog_info}"
+                f"{decibels:.1f}dB | rms:{rms_energy:.4f} | {frequency_hz:.0f}Hz | conf:{confidence:.2f}{dog_info}"
             )
         except Exception as e:
             print(f"[ERROR] Failed to log event: {e}")

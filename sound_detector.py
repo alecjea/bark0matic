@@ -88,7 +88,7 @@ class SoundDetector:
                         os.unlink(wav_path)
                     continue
 
-                is_match, confidence, frequency = self.classifier.classify(
+                is_match, confidence, frequency, yamnet_scores = self.classifier.classify(
                     features, audio
                 )
 
@@ -115,6 +115,7 @@ class SoundDetector:
                         confidence=confidence,
                         features=features,
                         audio_file=audio_filename,
+                        yamnet_scores=yamnet_scores,
                     )
 
                     self.last_detection = {
