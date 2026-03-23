@@ -949,10 +949,21 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 let soundCategories = [];
 
 let currentAudio = null;
-function playAudio(filename) {
-  if (currentAudio) { currentAudio.pause(); currentAudio = null; }
-  currentAudio = new Audio('/api/audio/' + filename);
-  currentAudio.play().catch(e => console.error('Playback failed:', e));
+let currentBtn = null;
+function playAudio(filename, btn) {
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio = null;
+    if (currentBtn) { currentBtn.textContent = '▶'; currentBtn.style.color = ''; }
+  }
+  btn.textContent = '⏳';
+  const audio = new Audio('/api/audio/' + encodeURIComponent(filename));
+  audio.oncanplay = () => { btn.textContent = '🔊'; btn.style.color = 'var(--orange)'; };
+  audio.onended = () => { btn.textContent = '▶'; btn.style.color = ''; currentAudio = null; currentBtn = null; };
+  audio.onerror = () => { btn.textContent = '❌'; btn.style.color = 'red'; setTimeout(() => { btn.textContent = '▶'; btn.style.color = ''; }, 2000); };
+  audio.play().catch(e => { btn.textContent = '❌'; btn.style.color = 'red'; setTimeout(() => { btn.textContent = '▶'; btn.style.color = ''; }, 2000); console.error('Playback failed:', e); });
+  currentAudio = audio;
+  currentBtn = btn;
 }
 
 function confColor(c) {
@@ -1009,7 +1020,7 @@ async function fetchDetections() {
       const conf = parseFloat(r.confidence) || 0;
       const pct = Math.min(conf * 100, 100);
       const playBtn = r.audio_file
-        ? `<button onclick="playAudio('${r.audio_file}')" style="background:none; border:none; cursor:pointer; font-size:1.1rem; padding:2px 6px;" title="Play recording">&#9654;</button>`
+        ? `<button onclick="playAudio('${r.audio_file}', this)" style="background:none; border:none; cursor:pointer; font-size:1.1rem; padding:2px 6px;" title="Play recording">▶</button>`
         : '<span style="color:var(--text-dim); font-size:0.7rem;">—</span>';
       return `<tr>
         <td>${playBtn}</td>
