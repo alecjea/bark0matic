@@ -2,6 +2,22 @@
 
 All notable changes to Barkomatic are documented here.
 
+## [1.0.11] - 2026-03-23
+
+### Added
+- Large/small dog frequency threshold slider on dashboard (configurable Hz cutoff)
+
+### Fixed
+- Installer: add `git` and `alsa-utils` to apt install (fresh installs were missing both)
+- Installer: fail-fast architecture guard — aborts on 32-bit OS before pip install since ai-edge-litert requires arm64
+- Installer: UFW allow rules (SSH + port 8080) now added before enabling firewall, preventing SSH lockout
+- Installer: root user guard — refuses to run as root to avoid installing into /root
+- Installer: consolidated duplicate ai-edge-litert install into single pip call
+
+### Changed
+- Moved CHANGELOG.md to project root
+- Removed `/dev` directory and purged from git history
+
 ## [1.0.0] - 2026-03-23
 
 ### Added
