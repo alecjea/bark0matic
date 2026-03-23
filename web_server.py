@@ -1,4 +1,5 @@
 """Flask web interface for bark0matic."""
+import os
 from datetime import datetime, timedelta
 from flask import Flask, jsonify, request, send_file, render_template_string
 from config import Config
@@ -108,6 +109,15 @@ def create_app(sound_detector):
     def api_download():
         csv_path = detector.logger.get_csv_path()
         return send_file(csv_path, as_attachment=True, download_name="detections.csv")
+
+    @app.route("/api/audio/<filename>")
+    def api_audio(filename):
+        """Serve a recorded audio clip for playback."""
+        audio_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "recordings")
+        filepath = os.path.join(audio_dir, filename)
+        if not os.path.exists(filepath):
+            return jsonify({"error": "not found"}), 404
+        return send_file(filepath, mimetype="audio/wav")
 
     @app.route("/api/chart-data")
     def api_chart_data():
@@ -815,6 +825,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       <table>
         <thead>
           <tr>
+            <th>Play</th>
             <th>Timestamp</th>
             <th>Sound</th>
             <th>Decibels</th>
@@ -937,6 +948,13 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 <script>
 let soundCategories = [];
 
+let currentAudio = null;
+function playAudio(filename) {
+  if (currentAudio) { currentAudio.pause(); currentAudio = null; }
+  currentAudio = new Audio('/api/audio/' + filename);
+  currentAudio.play().catch(e => console.error('Playback failed:', e));
+}
+
 function confColor(c) {
   const v = parseFloat(c) || 0;
   if (v >= 0.7) return 'var(--green)';
@@ -990,7 +1008,11 @@ async function fetchDetections() {
     tbody.innerHTML = rows.map(r => {
       const conf = parseFloat(r.confidence) || 0;
       const pct = Math.min(conf * 100, 100);
+      const playBtn = r.audio_file
+        ? `<button onclick="playAudio('${r.audio_file}')" style="background:none; border:none; cursor:pointer; font-size:1.1rem; padding:2px 6px;" title="Play recording">&#9654;</button>`
+        : '<span style="color:var(--text-dim); font-size:0.7rem;">—</span>';
       return `<tr>
+        <td>${playBtn}</td>
         <td style="white-space:nowrap;">${r.timestamp || ''}</td>
         <td>${r.sound_type || ''}</td>
         <td>${r.decibels || ''}dB</td>

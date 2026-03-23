@@ -16,6 +16,7 @@ Detects sounds (dog barks, music, sirens, and more) through a USB microphone usi
 - **Web Dashboard** — Real-time status, settings, detection log, clear log button, CSV download
 - **Detection History Chart** — 24h/week/month bar chart showing detection patterns over time
 - **Dog Size Detection** — Estimates large vs small dog based on bark frequency (< 2000Hz = large)
+- **Audio Playback** — Every detection saves a WAV clip you can play back from the dashboard
 - **USB Mic Auto-Detection** — Detect, test, and save microphone via dashboard
 - **CSV Logging** — Timestamped detections with confidence, dB, frequency, and dog size
 - **Timezone Support** — Configurable local timezone for accurate timestamps
@@ -90,7 +91,7 @@ Access at `http://<rpi-ip>:8080`
 - **Sound Type** — Switch between 19 categories
 - **Microphone** — Detect, test, and save USB input device
 - **Sensitivity** — Confidence threshold (0.01-1.0), energy threshold sliders
-- **Detection Log** — Live table with dog size column, clear log, CSV download
+- **Detection Log** — Live table with play button, dog size, clear log, CSV download
 - **Guide** — Click ? for help on all settings
 
 ---

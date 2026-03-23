@@ -8,7 +8,7 @@ from config import Config
 class FileLogger:
     """Logs detection events to a CSV file."""
 
-    HEADER = ["timestamp", "sound_type", "decibels", "frequency_hz", "confidence", "duration_seconds", "dog_size"]
+    HEADER = ["timestamp", "sound_type", "decibels", "frequency_hz", "confidence", "duration_seconds", "dog_size", "audio_file"]
 
     def __init__(self):
         """Initialize the CSV logger."""
@@ -23,7 +23,7 @@ class FileLogger:
                 writer = csv.writer(f)
                 writer.writerow(self.HEADER)
 
-    def log_event(self, decibels, frequency_hz, confidence, features):
+    def log_event(self, decibels, frequency_hz, confidence, features, audio_file=""):
         """
         Log a detected sound event.
 
@@ -32,6 +32,7 @@ class FileLogger:
             frequency_hz: Primary frequency in Hz
             confidence: Detection confidence 0-1
             features: Raw audio features dict
+            audio_file: Filename of saved audio clip (optional)
         """
         now = datetime.now(Config.get_timezone())
         timestamp = now.strftime("%Y-%m-%d %H:%M:%S %Z")
@@ -49,7 +50,7 @@ class FileLogger:
                 with open(self.csv_path, "r", newline="") as f:
                     lines = f.readlines()
 
-            new_row = f"{timestamp},{Config.SOUND_TYPE_NAME},{decibels:.1f},{frequency_hz:.0f},{confidence:.3f},{duration:.1f},{dog_size}\n"
+            new_row = f"{timestamp},{Config.SOUND_TYPE_NAME},{decibels:.1f},{frequency_hz:.0f},{confidence:.3f},{duration:.1f},{dog_size},{audio_file}\n"
 
             # Write header + new row at top + rest
             with open(self.csv_path, "w", newline="") as f:

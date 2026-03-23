@@ -1,4 +1,6 @@
 """Sound detection daemon for Barkomatic."""
+import os
+import shutil
 import threading
 import time
 from datetime import datetime
@@ -6,6 +8,9 @@ from config import Config
 from audio_processor import AudioProcessor
 from sound_classifier import SoundClassifier
 from file_logger import FileLogger
+
+# Directory to store detection audio clips
+AUDIO_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "recordings")
 
 
 class SoundDetector:
@@ -23,6 +28,9 @@ class SoundDetector:
         self.last_detection = None
         self._thread = None
         self._stop_event = threading.Event()
+
+        # Ensure recordings directory exists
+        os.makedirs(AUDIO_DIR, exist_ok=True)
 
     def start(self):
         """Start detection in a background thread."""
@@ -70,12 +78,14 @@ class SoundDetector:
 
         try:
             while not self._stop_event.is_set():
-                audio = self.audio_processor.capture_audio_chunk()
+                audio, wav_path = self.audio_processor.capture_audio_chunk()
                 if audio is None:
                     continue
 
                 features = self.audio_processor.extract_features(audio)
                 if features is None:
+                    if wav_path and os.path.exists(wav_path):
+                        os.unlink(wav_path)
                     continue
 
                 is_match, confidence, frequency = self.classifier.classify(
@@ -89,11 +99,22 @@ class SoundDetector:
                     )
                     print(f"[#{self.detection_count}] {explanation}")
 
+                    # Save audio clip
+                    audio_filename = ""
+                    if wav_path and os.path.exists(wav_path):
+                        now = datetime.now(Config.get_timezone())
+                        audio_filename = now.strftime("%Y%m%d_%H%M%S") + ".wav"
+                        dest = os.path.join(AUDIO_DIR, audio_filename)
+                        shutil.move(wav_path, dest)
+                        wav_path = None  # Don't delete below
+                        print(f"[AUDIO] Saved clip: {audio_filename}")
+
                     self.logger.log_event(
                         decibels=features["decibels"],
                         frequency_hz=frequency,
                         confidence=confidence,
                         features=features,
+                        audio_file=audio_filename,
                     )
 
                     self.last_detection = {
@@ -104,6 +125,10 @@ class SoundDetector:
                         "frequency_hz": round(frequency, 0),
                         "confidence": round(confidence, 3),
                     }
+
+                # Clean up temp file if not saved
+                if wav_path and os.path.exists(wav_path):
+                    os.unlink(wav_path)
 
         except Exception as e:
             print(f"[ERROR] Detector crashed: {e}")

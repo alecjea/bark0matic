@@ -1,6 +1,6 @@
 """Audio capture and feature extraction."""
+import os
 import numpy as np
-import librosa
 import sounddevice as sd
 from config import Config
 
@@ -95,13 +95,13 @@ class AudioProcessor:
         Capture a chunk of audio from the microphone.
 
         Returns:
-            numpy.ndarray: Audio samples as 1D array, or None on error
+            tuple: (numpy.ndarray, str) - Audio samples and temp WAV path, or (None, None) on error.
+                   Caller must delete the WAV file when done (or keep it for playback).
         """
         try:
             import subprocess
             import wave
             import tempfile
-            import os
 
             duration = Config.BARK_DETECTION_CHUNK_SIZE
             raw_device = self.device if self.device and self.device != "auto" else "hw:2,0"
@@ -113,32 +113,30 @@ class AudioProcessor:
             tmp_path = tmp.name
             tmp.close()
 
-            try:
-                cmd = [
-                    'arecord',
-                    '-D', device,
-                    '-f', 'S16_LE',
-                    '-r', str(self.sample_rate),
-                    '-c', '1',
-                    '-d', str(int(duration)),
-                    '-t', 'wav',
-                    '-q',
-                    tmp_path
-                ]
-                result = subprocess.run(cmd, capture_output=True, timeout=int(duration) + 5)
+            cmd = [
+                'arecord',
+                '-D', device,
+                '-f', 'S16_LE',
+                '-r', str(self.sample_rate),
+                '-c', '1',
+                '-d', str(int(duration)),
+                '-t', 'wav',
+                '-q',
+                tmp_path
+            ]
+            result = subprocess.run(cmd, capture_output=True, timeout=int(duration) + 5)
 
-                if result.returncode != 0:
-                    print(f"[ERROR] arecord failed: {result.stderr.decode()}")
-                    return None
-
-                with wave.open(tmp_path, 'rb') as wf:
-                    frames = wf.readframes(wf.getnframes())
-                    audio = np.frombuffer(frames, dtype=np.int16)
-            finally:
+            if result.returncode != 0:
+                print(f"[ERROR] arecord failed: {result.stderr.decode()}")
                 if os.path.exists(tmp_path):
                     os.unlink(tmp_path)
+                return None, None
 
-            return audio.flatten()
+            with wave.open(tmp_path, 'rb') as wf:
+                frames = wf.readframes(wf.getnframes())
+                audio = np.frombuffer(frames, dtype=np.int16)
+
+            return audio.flatten(), tmp_path
         except Exception as e:
             print(f"[ERROR] Audio capture failed: {e}")
             # Try to recover by re-detecting the device
@@ -149,7 +147,7 @@ class AudioProcessor:
                     self.device = new_device
             except Exception:
                 pass
-            return None
+            return None, None
 
     def calculate_decibels(self, audio):
         """Calculate RMS-based decibel level from audio samples."""
