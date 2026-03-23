@@ -1,4 +1,3 @@
-librosa
 numpy
 sounddevice
 ai-edge-litert
