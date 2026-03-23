@@ -87,6 +87,12 @@ class FileLogger:
                 reader = csv.DictReader(f)
                 rows = list(reader)
 
+            # Replace None values with empty strings (old rows missing new columns)
+            for row in rows:
+                for key in row:
+                    if row[key] is None:
+                        row[key] = ""
+
             # Already newest first, just limit
             return rows[:count]
         except Exception as e:
