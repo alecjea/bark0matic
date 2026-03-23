@@ -25,7 +25,7 @@ echo -e "${NC}"
 # ────────────────────────────────────────────────────────────
 # Step 1: Update package lists
 # ────────────────────────────────────────────────────────────
-echo -e "${YELLOW}[1/7] Updating package lists...${NC}"
+echo -e "${YELLOW}[1/8] Updating package lists...${NC}"
 sudo apt-get update -qq
 echo -e "${GREEN}✓ Package lists updated${NC}"
 echo ""
@@ -33,7 +33,7 @@ echo ""
 # ────────────────────────────────────────────────────────────
 # Step 2: Install Python and pip
 # ────────────────────────────────────────────────────────────
-echo -e "${YELLOW}[2/7] Installing Python 3, pip, and audio libraries...${NC}"
+echo -e "${YELLOW}[2/8] Installing Python 3, pip, and audio libraries...${NC}"
 sudo apt-get install -y -qq python3 python3-pip python3-full libportaudio2
 PYTHON_VERSION=$(python3 --version 2>&1)
 echo -e "${GREEN}✓ $PYTHON_VERSION installed${NC}"
@@ -42,7 +42,7 @@ echo ""
 # ────────────────────────────────────────────────────────────
 # Step 3: Install and configure UFW firewall
 # ────────────────────────────────────────────────────────────
-echo -e "${YELLOW}[3/7] Setting up firewall (UFW)...${NC}"
+echo -e "${YELLOW}[3/8] Setting up firewall (UFW)...${NC}"
 sudo apt-get install -y -qq ufw
 
 # Enable UFW without prompting
@@ -62,7 +62,7 @@ echo ""
 # ────────────────────────────────────────────────────────────
 # Step 4: Clone or update repository
 # ────────────────────────────────────────────────────────────
-echo -e "${YELLOW}[4/7] Cloning Barkomatic repository...${NC}"
+echo -e "${YELLOW}[4/8] Cloning Barkomatic repository...${NC}"
 
 if [ -d "$HOME/bark0matic" ]; then
   echo "  Repository already exists, updating..."
@@ -82,15 +82,56 @@ echo ""
 # ────────────────────────────────────────────────────────────
 # Step 5: Install Python dependencies
 # ────────────────────────────────────────────────────────────
-echo -e "${YELLOW}[5/7] Installing Python dependencies...${NC}"
+echo -e "${YELLOW}[5/8] Installing Python dependencies...${NC}"
 pip install --break-system-packages -q -r requirements.txt 2>/dev/null || pip install --break-system-packages -r requirements.txt
 echo -e "${GREEN}✓ Dependencies installed${NC}"
 echo ""
 
 # ────────────────────────────────────────────────────────────
-# Step 6: Optional systemd service setup
+# Step 6: Optional ReSpeaker HAT setup
 # ────────────────────────────────────────────────────────────
-echo -e "${YELLOW}[6/7] Setting up systemd service (auto-start on boot)...${NC}"
+echo -e "${YELLOW}[6/8] ReSpeaker 2-Mic HAT setup (optional)...${NC}"
+echo ""
+read -p "  Do you have a ReSpeaker 2-Mic Pi HAT attached? [y/N] " -n 1 -r RESPEAKER_REPLY
+echo ""
+
+if [[ $RESPEAKER_REPLY =~ ^[Yy]$ ]]; then
+  CONFIG_FILE="/boot/firmware/config.txt"
+  # Fall back to /boot/config.txt for older Pi OS
+  [ -f "$CONFIG_FILE" ] || CONFIG_FILE="/boot/config.txt"
+
+  # Enable I2C
+  if grep -q "^#dtparam=i2c_arm=on" "$CONFIG_FILE"; then
+    sudo sed -i 's/^#dtparam=i2c_arm=on/dtparam=i2c_arm=on/' "$CONFIG_FILE"
+  elif ! grep -q "^dtparam=i2c_arm=on" "$CONFIG_FILE"; then
+    echo "dtparam=i2c_arm=on" | sudo tee -a "$CONFIG_FILE" > /dev/null
+  fi
+
+  # Enable I2S
+  if grep -q "^#dtparam=i2s=on" "$CONFIG_FILE"; then
+    sudo sed -i 's/^#dtparam=i2s=on/dtparam=i2s=on/' "$CONFIG_FILE"
+  elif ! grep -q "^dtparam=i2s=on" "$CONFIG_FILE"; then
+    echo "dtparam=i2s=on" | sudo tee -a "$CONFIG_FILE" > /dev/null
+  fi
+
+  # Add WM8960 overlay if not already present
+  if ! grep -q "dtoverlay=wm8960-soundcard" "$CONFIG_FILE"; then
+    echo "dtoverlay=wm8960-soundcard" | sudo tee -a "$CONFIG_FILE" > /dev/null
+  fi
+
+  echo -e "${GREEN}✓ ReSpeaker HAT configured (I2C, I2S, WM8960 overlay)${NC}"
+  echo -e "${YELLOW}  ⚠ Reboot required for HAT to be detected${NC}"
+  NEEDS_REBOOT=true
+else
+  echo "  Skipping ReSpeaker setup."
+  NEEDS_REBOOT=false
+fi
+echo ""
+
+# ────────────────────────────────────────────────────────────
+# Step 7: Optional systemd service setup
+# ────────────────────────────────────────────────────────────
+echo -e "${YELLOW}[7/8] Setting up systemd service (auto-start on boot)...${NC}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -123,9 +164,9 @@ echo "  - Service is now running"
 echo ""
 
 # ────────────────────────────────────────────────────────────
-# Step 7: Summary and next steps
+# Step 8: Summary and next steps
 # ────────────────────────────────────────────────────────────
-echo -e "${YELLOW}[7/7] Setup complete!${NC}"
+echo -e "${YELLOW}[8/8] Setup complete!${NC}"
 echo ""
 
 echo -e "${GREEN}════════════════════════════════════════════════════════${NC}"
@@ -155,3 +196,17 @@ echo "Firewall status:"
 sudo ufw status | grep -E "22/tcp|8080/tcp"
 echo ""
 echo -e "${GREEN}Happy barking! 🐕${NC}"
+
+if [ "$NEEDS_REBOOT" = true ]; then
+  echo ""
+  echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+  echo -e "${YELLOW}  ⚠ REBOOT REQUIRED for ReSpeaker HAT to be detected${NC}"
+  echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+  read -p "  Reboot now? [y/N] " -n 1 -r
+  echo ""
+  if [[ $REPLY =~ ^[Yy]$ ]]; then
+    sudo reboot
+  else
+    echo "  Run 'sudo reboot' when ready."
+  fi
+fi
