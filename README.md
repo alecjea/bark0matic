@@ -13,12 +13,12 @@ Detects sounds (dog barks, music, sirens, and more) through a USB microphone usi
 
 - **AI Detection** — Google YAMNet (TensorFlow Lite), 521 AudioSet classes, runs fully offline
 - **19 Sound Types** — Dog bark, cat, bird, siren, fire alarm, glass breaking, gunshot, car horn, engine, crying, screaming, thunder, knocking, snoring, coughing, alarm clock, speech, music, and more
-- **Web Dashboard** — Real-time status, settings, detection log, clear log button, CSV download
+- **Web Dashboard** — Real-time status, settings, detection log, software update button, clear log button, CSV export
 - **Detection History Chart** — 24h/week/month bar chart showing detection patterns over time
 - **Dog Size Detection** — Estimates large vs small dog based on bark frequency (< 2000Hz = large)
 - **Audio Playback** — Every detection saves a WAV clip you can play back from the dashboard
 - **USB Mic Auto-Detection** — Detect, test, and save microphone via dashboard
-- **SQLite Logging** — Timestamped detections with confidence, dB, frequency, and dog size
+- **SQLite Logging** — Timestamped detections stored in `detections.db` with confidence, dB, frequency, and dog size
 - **Timezone Support** — Configurable local timezone for accurate timestamps
 - **Systemd Service** — Auto-starts on boot, auto-restarts on crash
 - **Adjustable Sensitivity** — Confidence threshold (0.01–1.0), energy threshold, frequency range
@@ -64,6 +64,8 @@ bash update.sh
 
 Pulls latest from master and restarts the service.
 
+You can also trigger the same GitHub update directly from the dashboard with the `Update Software` button.
+
 ---
 
 ## Requirements
@@ -80,7 +82,7 @@ Pulls latest from master and restarts the service.
 1. **Audio Capture** — Records 2-second chunks via `arecord` using ALSA (`plughw` for hardware resampling to 16kHz)
 2. **YAMNet Classification** — TFLite model scores each chunk against 521 sound classes
 3. **Threshold Check** — If confidence >= threshold, logs the detection
-4. **SQLite + Dashboard** — Detection logged to `detections.db` and shown live in the web UI
+4. **SQLite + Dashboard** — Detections are stored in `detections.db`, shown live in the web UI, and exported as CSV on demand
 
 Audio is captured using `plughw:X,Y` so ALSA resamples to 16kHz regardless of what the USB mic natively supports.
 
@@ -91,11 +93,12 @@ Audio is captured using `plughw:X,Y` so ALSA resamples to 16kHz regardless of wh
 Access at `http://<rpi-ip>:8080`
 
 - **Status** — Running/stopped indicator with pulsing dot, detection count, uptime
+- **Software Update** — Pull the latest version from GitHub and restart Barkomatic from the dashboard
 - **Detection History** — Bar chart with 24h/week/month toggle to spot patterns
 - **Sound Type** — Switch between 19 categories
 - **Microphone** — Detect, test, and save USB input device
 - **Sensitivity** — Confidence threshold (0.01-1.0), energy threshold sliders
-- **Detection Log** — Live table with play button, dog size, clear log, CSV download
+- **Detection Log** — Live table with play button, dog size, clear log, CSV export
 - **Guide** — Click ? for help on all settings
 
 ---
@@ -120,6 +123,10 @@ Change via the web dashboard or edit directly, then restart:
 ```bash
 sudo systemctl restart barkomatic
 ```
+
+Runtime data files:
+- `detections.db` — primary SQLite event store
+- `detections_export.csv` — generated only when exported from the dashboard
 
 ---
 
@@ -186,7 +193,7 @@ Then set the device in the web dashboard (e.g. `hw:2,0`).
 | `config.py` | Config load/save |
 | `web_server.py` | Flask dashboard |
 | `install.sh` | Fresh install script |
-| `update.sh` | Pull + restart script |
+| `update.sh` | Pull latest from GitHub + restart script |
 
 ---
 

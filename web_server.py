@@ -1,5 +1,6 @@
 """Flask web interface for bark0matic."""
 import os
+import subprocess
 from datetime import datetime, timedelta
 from flask import Flask, jsonify, request, send_file, render_template_string
 from config import Config
@@ -111,6 +112,32 @@ def create_app(sound_detector):
     def api_download():
         csv_path = detector.logger.get_csv_path()
         return send_file(csv_path, as_attachment=True, download_name="detections.csv")
+
+    @app.route("/api/update", methods=["POST"])
+    def api_update():
+        """Start a background software update from GitHub and restart the service."""
+        try:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            log_path = "/tmp/barkomatic_update.log"
+
+            subprocess.Popen(
+                [
+                    "bash",
+                    "-lc",
+                    f"cd {script_dir!r} && nohup bash update.sh > {log_path!r} 2>&1 &",
+                ],
+                start_new_session=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+
+            return jsonify({
+                "status": "started",
+                "message": "Update started. The dashboard will reconnect after the service restarts.",
+                "log_path": log_path,
+            })
+        except Exception as e:
+            return jsonify({"status": "error", "message": str(e)}), 500
 
     @app.route("/api/audio/<filename>")
     def api_audio(filename):
@@ -482,6 +509,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   .btn-stop { background: var(--red); color: #fff; }
   .btn-download { background: var(--blue); color: #000; }
   .btn-save { background: var(--purple); color: #fff; }
+  .btn-update { background: var(--orange); color: #000; }
   .btn-clear { background: transparent; border: 1px solid var(--border); color: var(--text-dim); }
   .chart-period { background: transparent; border: 1px solid var(--border); color: var(--text-dim); padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 0.75rem; }
   .chart-period.active { background: var(--orange); color: #000; border-color: var(--orange); font-weight: 600; }
@@ -691,6 +719,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     <div class="controls">
       <button class="btn-start" onclick="control('start')">&#9654; Start</button>
       <button class="btn-stop" onclick="control('stop')">&#9632; Stop</button>
+      <button class="btn-update" onclick="updateSoftware()">&#10227; Update Software</button>
     </div>
   </div>
 
@@ -1171,6 +1200,51 @@ async function clearLog() {
     fetchStatus();
   } catch(e) {
     showToast('Failed to clear log', 'error');
+  }
+}
+
+async function waitForReconnect(timeoutMs = 90000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    try {
+      const res = await fetch('/api/status', {cache: 'no-store'});
+      if (res.ok) {
+        await fetchStatus();
+        await fetchDetections();
+        await fetchChartData();
+        return true;
+      }
+    } catch (e) {
+      // Service is expected to be unavailable while restarting.
+    }
+    await new Promise(resolve => setTimeout(resolve, 2000));
+  }
+  return false;
+}
+
+async function updateSoftware() {
+  if (!confirm('Pull the latest version from GitHub and restart Barkomatic now?')) return;
+
+  try {
+    const res = await fetch('/api/update', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'}
+    });
+    const data = await res.json();
+
+    if (!res.ok || data.status !== 'started') {
+      throw new Error(data.message || 'Update failed to start');
+    }
+
+    showToast('Update started. Waiting for restart...', 'success');
+    const reconnected = await waitForReconnect();
+    if (reconnected) {
+      showToast('Update complete. Barkomatic is back online.', 'success');
+    } else {
+      showToast('Update started, but reconnect timed out. Refresh in a minute.', 'error');
+    }
+  } catch (e) {
+    showToast('Failed to start update: ' + e.message, 'error');
   }
 }
 

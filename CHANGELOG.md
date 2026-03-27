@@ -2,6 +2,17 @@
 
 All notable changes to Barkomatic are documented here.
 
+## [1.0.13] - 2026-03-28
+
+### Added
+- Dashboard `Update Software` button that runs the existing GitHub update flow and waits for the service to come back online
+
+### Changed
+- Detection log storage moved from `detections.csv` to SQLite `detections.db`
+- Dashboard CSV download now exports from SQLite on demand instead of reading a live CSV log file
+- Legacy `detections.csv` data is imported into SQLite automatically on first run when the database is empty
+- README and installer output updated to describe SQLite logging and CSV export behavior
+
 ## [1.0.11] - 2026-03-23
 
 ### Added
