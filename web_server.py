@@ -32,6 +32,19 @@ SOUND_CATEGORIES = [
 ]
 
 
+def get_app_version():
+    """Read the current app version from VERSION."""
+    version_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "VERSION")
+    try:
+        with open(version_path, "r", encoding="utf-8") as handle:
+            return handle.read().strip()
+    except Exception:
+        return "unknown"
+
+
+APP_VERSION = get_app_version()
+
+
 def create_app(sound_detector):
     """Create Flask app with reference to the detector."""
     global detector
@@ -41,11 +54,13 @@ def create_app(sound_detector):
 
     @app.route("/")
     def dashboard():
-        return render_template_string(DASHBOARD_HTML)
+        return render_template_string(DASHBOARD_HTML, app_version=APP_VERSION)
 
     @app.route("/api/status")
     def api_status():
-        return jsonify(detector.get_status())
+        status = detector.get_status()
+        status["version"] = APP_VERSION
+        return jsonify(status)
 
     @app.route("/api/detections")
     def api_detections():
@@ -677,7 +692,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 <body>
 
 <div class="header">
-  <h1>bark0matic <span class="header-badge">v2</span></h1>
+  <h1>bark0matic <span class="header-badge">v{{ app_version }}</span></h1>
   <div style="display:flex; align-items:center; gap:12px;">
     <div style="display:flex; align-items:center; gap:6px;">
       <span class="pulse-dot" id="header-dot"></span>
