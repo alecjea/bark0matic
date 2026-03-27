@@ -719,7 +719,6 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     <div class="controls">
       <button class="btn-start" onclick="control('start')">&#9654; Start</button>
       <button class="btn-stop" onclick="control('stop')">&#9632; Stop</button>
-      <button class="btn-update" onclick="updateSoftware()">&#10227; Update Software</button>
     </div>
   </div>
 
@@ -845,6 +844,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     </div>
     <div style="margin-top:14px; display:flex; gap:10px;">
       <button class="btn-save" onclick="saveSettings()">Save All Settings</button>
+      <button class="btn-update" onclick="updateSoftware()">&#10227; Update Software</button>
       <button class="btn-download" onclick="location.href='/api/download'">&#11015; Download CSV</button>
     </div>
   </div>
