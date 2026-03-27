@@ -2,7 +2,7 @@
 
 **AI Sound Detection & Logging for Raspberry Pi**
 
-Detects sounds (dog barks, music, sirens, and more) through a USB microphone using Google's YAMNet AI model. Logs detections with timestamps and confidence scores to CSV. Controlled via a real-time web dashboard.
+Detects sounds (dog barks, music, sirens, and more) through a USB microphone using Google's YAMNet AI model. Logs detections with timestamps and confidence scores to SQLite. Controlled via a real-time web dashboard.
 
 <img width="711" height="964" alt="image" src="https://github.com/user-attachments/assets/4d38e77d-3775-427e-820d-a40bff61fe6b" />
 
@@ -18,7 +18,7 @@ Detects sounds (dog barks, music, sirens, and more) through a USB microphone usi
 - **Dog Size Detection** — Estimates large vs small dog based on bark frequency (< 2000Hz = large)
 - **Audio Playback** — Every detection saves a WAV clip you can play back from the dashboard
 - **USB Mic Auto-Detection** — Detect, test, and save microphone via dashboard
-- **CSV Logging** — Timestamped detections with confidence, dB, frequency, and dog size
+- **SQLite Logging** — Timestamped detections with confidence, dB, frequency, and dog size
 - **Timezone Support** — Configurable local timezone for accurate timestamps
 - **Systemd Service** — Auto-starts on boot, auto-restarts on crash
 - **Adjustable Sensitivity** — Confidence threshold (0.01–1.0), energy threshold, frequency range
@@ -80,7 +80,7 @@ Pulls latest from master and restarts the service.
 1. **Audio Capture** — Records 2-second chunks via `arecord` using ALSA (`plughw` for hardware resampling to 16kHz)
 2. **YAMNet Classification** — TFLite model scores each chunk against 521 sound classes
 3. **Threshold Check** — If confidence >= threshold, logs the detection
-4. **CSV + Dashboard** — Detection logged to `detections.csv` and shown live in the web UI
+4. **SQLite + Dashboard** — Detection logged to `detections.db` and shown live in the web UI
 
 Audio is captured using `plughw:X,Y` so ALSA resamples to 16kHz regardless of what the USB mic natively supports.
 
@@ -182,7 +182,7 @@ Then set the device in the web dashboard (e.g. `hw:2,0`).
 | `sound_detector.py` | Detection loop (threading) |
 | `sound_classifier.py` | YAMNet TFLite inference |
 | `audio_processor.py` | arecord capture + feature extraction |
-| `file_logger.py` | CSV logging |
+| `file_logger.py` | SQLite logging + CSV export |
 | `config.py` | Config load/save |
 | `web_server.py` | Flask dashboard |
 | `install.sh` | Fresh install script |

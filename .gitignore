@@ -19,5 +19,7 @@ build/
 *.pem
 *.key
 config.json
+detections.db
+detections_export.csv
 recordings/
 dev/

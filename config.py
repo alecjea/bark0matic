@@ -33,7 +33,7 @@ class Config:
     DOG_SIZE_FREQUENCY_THRESHOLD = 2000  # Hz — below = large dog, above = small dog
 
     # Logging
-    LOG_FILE_PATH = str(Path(__file__).parent / "detections.csv")
+    LOG_DB_PATH = str(Path(__file__).parent / "detections.db")
     BACKUP_LOG_FILE = "/tmp/barkomatic_backup.json"
 
     # Web
@@ -52,7 +52,12 @@ class Config:
 
             for key, value in data.items():
                 key_upper = key.upper()
-                if hasattr(cls, key_upper):
+                if key_upper == "LOG_FILE_PATH":
+                    if isinstance(value, str) and value.endswith(".csv"):
+                        cls.LOG_DB_PATH = str(Path(value).with_suffix(".db"))
+                    else:
+                        cls.LOG_DB_PATH = value
+                elif hasattr(cls, key_upper):
                     setattr(cls, key_upper, value)
 
             print("[CONFIG] Configuration loaded from config.json")
@@ -77,7 +82,7 @@ class Config:
             "bark_detection_min_duration": cls.BARK_DETECTION_MIN_DURATION,
             "bark_detection_energy_threshold": cls.BARK_DETECTION_ENERGY_THRESHOLD,
             "dog_size_frequency_threshold": cls.DOG_SIZE_FREQUENCY_THRESHOLD,
-            "log_file_path": cls.LOG_FILE_PATH,
+            "log_db_path": cls.LOG_DB_PATH,
             "web_port": cls.WEB_PORT,
         }
         try:
