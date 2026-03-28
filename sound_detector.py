@@ -52,6 +52,10 @@ class SoundDetector:
         uptime = None
         if self.start_time:
             uptime = str(datetime.now() - self.start_time).split(".")[0]
+        disk = shutil.disk_usage(AUDIO_DIR)
+        free_gb = round(disk.free / (1024 ** 3), 1)
+        total_gb = round(disk.total / (1024 ** 3), 1)
+        free_pct = round((disk.free / disk.total) * 100, 1) if disk.total else 0.0
 
         return {
             "running": self.running,
@@ -64,6 +68,9 @@ class SoundDetector:
             "sound_type": "All sounds",
             "record_sound_indices": Config.RECORD_SOUND_INDICES,
             "threshold": Config.BARK_DETECTION_THRESHOLD,
+            "disk_free_gb": free_gb,
+            "disk_total_gb": total_gb,
+            "disk_free_pct": free_pct,
         }
 
     def reload_config(self):
@@ -104,11 +111,9 @@ class SoundDetector:
                     self.detection_count += len(matches)
                     explanation = self.classifier.get_explanation(features, matches)
                     print(f"[#{self.detection_count}] {explanation}")
+                    top_match = matches[0]
 
-                    should_record = any(
-                        match["index"] in set(Config.RECORD_SOUND_INDICES or [])
-                        for match in matches
-                    )
+                    should_record = top_match["index"] in set(Config.RECORD_SOUND_INDICES or [])
 
                     audio_filename = ""
                     if should_record and wav_path and os.path.exists(wav_path):
@@ -130,8 +135,6 @@ class SoundDetector:
                             audio_file=audio_filename,
                             yamnet_scores=yamnet_scores,
                         )
-
-                    top_match = matches[0]
 
                     self.last_detection = {
                         "timestamp": datetime.now(

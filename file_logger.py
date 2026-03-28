@@ -81,6 +81,23 @@ class FileLogger:
             data[key] = "" if value is None else str(value)
         return data
 
+    def _build_filters(self, search="", audio_only=False):
+        """Build SQL WHERE clause parts for detection queries."""
+        clauses = []
+        params = []
+
+        search = (search or "").strip()
+        if search:
+            clauses.append("(LOWER(sound_type) LIKE ? OR LOWER(timestamp) LIKE ?)")
+            pattern = f"%{search.lower()}%"
+            params.extend([pattern, pattern])
+
+        if audio_only:
+            clauses.append("audio_file <> ''")
+
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        return where_sql, params
+
     def log_event(
         self,
         sound_type,
@@ -164,38 +181,43 @@ class FileLogger:
         except Exception as exc:
             print(f"[ERROR] Failed to log event: {exc}")
 
-    def get_recent(self, count=100):
+    def get_recent(self, count=100, search="", audio_only=False):
         """Get recent detection events, newest first."""
         try:
+            where_sql, params = self._build_filters(search=search, audio_only=audio_only)
             with self._connect() as conn:
                 rows = conn.execute(
-                    """
+                    f"""
                     SELECT
                         timestamp, class_index, sound_type, decibels, rms_energy, frequency_hz,
                         confidence, duration_seconds, dog_size, audio_file, json_payload
                     FROM detections
+                    {where_sql}
                     ORDER BY id DESC
                     LIMIT ?
                     """,
-                    (max(0, int(count)),),
+                    (*params, max(0, int(count))),
                 ).fetchall()
             return [self._row_to_dict(row) for row in rows]
         except Exception as exc:
             print(f"[ERROR] Failed to read events: {exc}")
             return []
 
-    def export_csv(self):
+    def export_csv(self, search="", audio_only=False):
         """Export the current SQLite log to a CSV file and return its path."""
         try:
+            where_sql, params = self._build_filters(search=search, audio_only=audio_only)
             with self._connect() as conn:
                 rows = conn.execute(
-                    """
+                    f"""
                     SELECT
                         timestamp, class_index, sound_type, decibels, rms_energy, frequency_hz,
                         confidence, duration_seconds, dog_size, audio_file, json_payload
                     FROM detections
+                    {where_sql}
                     ORDER BY id DESC
-                    """
+                    """,
+                    params,
                 ).fetchall()
 
             with open(self.csv_export_path, "w", newline="", encoding="utf-8") as handle:
@@ -210,9 +232,9 @@ class FileLogger:
             print(f"[ERROR] Failed to export CSV: {exc}")
             raise
 
-    def get_csv_path(self):
+    def get_csv_path(self, search="", audio_only=False):
         """Return a freshly exported CSV path for dashboard downloads."""
-        return self.export_csv()
+        return self.export_csv(search=search, audio_only=audio_only)
 
     def clear(self):
         """Clear all logged events."""

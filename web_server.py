@@ -64,7 +64,9 @@ def create_app(sound_detector):
     @app.route("/api/detections")
     def api_detections():
         count = request.args.get("count", 100, type=int)
-        rows = detector.logger.get_recent(count)
+        search = request.args.get("search", "", type=str)
+        audio_only = request.args.get("audio_only", "0") in ("1", "true", "yes", "on")
+        rows = detector.logger.get_recent(count, search=search, audio_only=audio_only)
         return jsonify(rows)
 
     @app.route("/api/settings", methods=["GET"])
@@ -135,7 +137,9 @@ def create_app(sound_detector):
 
     @app.route("/api/download")
     def api_download():
-        csv_path = detector.logger.get_csv_path()
+        search = request.args.get("search", "", type=str)
+        audio_only = request.args.get("audio_only", "0") in ("1", "true", "yes", "on")
+        csv_path = detector.logger.get_csv_path(search=search, audio_only=audio_only)
         return send_file(csv_path, as_attachment=True, download_name="detections.csv")
 
     @app.route("/api/update", methods=["POST"])
@@ -645,6 +649,36 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     padding-right: 36px;
   }
   .field select option { background: var(--bg-card); color: var(--text); }
+  .pill-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .field-hint {
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    margin-top: 8px;
+    line-height: 1.4;
+  }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: rgba(56, 189, 248, 0.12);
+    border: 1px solid rgba(56, 189, 248, 0.28);
+    color: var(--accent);
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1;
+  }
+  .pill-empty {
+    color: var(--text-dim);
+    border-style: dashed;
+    background: rgba(255,255,255,0.03);
+    border-color: var(--border);
+  }
 
   /* ── Range Slider ───────────────────────────────────── */
   .range-row { display: flex; align-items: center; gap: 12px; }
@@ -733,6 +767,27 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     align-items: center;
     flex-wrap: wrap;
   }
+  .log-search {
+    min-width: 220px;
+    flex: 1 1 240px;
+    background: var(--bg-dark);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 10px;
+    border-radius: 8px;
+    font-size: 0.8rem;
+  }
+  .log-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    white-space: nowrap;
+  }
+  .log-check input {
+    accent-color: var(--accent);
+  }
   .log-count {
     font-size: 0.75rem;
     color: var(--text-dim);
@@ -815,6 +870,14 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           </div>
         </div>
       </div>
+      <div class="stat">
+        <div class="stat-label">Disk Free</div>
+        <div class="stat-value" id="disk-free" style="font-size:1.1rem;">â€”</div>
+        <div class="meter-meta">
+          <span id="disk-free-pct">â€”</span>
+          <span id="disk-total">â€”</span>
+        </div>
+      </div>
     </div>
     <div class="controls">
       <button class="btn-start" onclick="control('start')">&#9654; Start</button>
@@ -848,10 +911,14 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         <label>Sounds To Record (up to 5)</label>
         <input type="text" id="record_sound_search" placeholder="Search YAMNet sounds..." oninput="filterRecordSounds()">
         <select id="record_sound_indices" multiple size="10" onchange="recordSoundsChanged()"></select>
+        <div class="field-hint">Use Ctrl + click to add or remove multiple sounds. On Mac, use Cmd + click.</div>
+        <div class="pill-list" id="record-sound-pills">
+          <span class="pill pill-empty">No sounds selected</span>
+        </div>
         <div style="font-size:0.75rem; color:var(--text-dim); margin-top:8px;" id="record-sound-summary">No recording sounds selected</div>
       </div>
       <p style="font-size:0.75rem; color:var(--text-dim); margin-top:10px;">
-        Barkomatic logs every non-speech YAMNet sound above threshold. Audio is only saved when one of the selected sounds is present.
+        Barkomatic logs every non-speech YAMNet sound above threshold. Audio is only saved when the most prominent detected sound is one of the selected sounds.
       </p>
     </div>
 
@@ -947,7 +1014,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     <div style="margin-top:14px; display:flex; gap:10px;">
       <button class="btn-save" onclick="saveSettings()">Save All Settings</button>
       <button class="btn-update" onclick="updateSoftware()">&#10227; Update Software</button>
-      <button class="btn-download" onclick="location.href='/api/download'">&#11015; Download CSV</button>
+      <button class="btn-download" onclick="downloadCsv()">&#11015; Download CSV</button>
     </div>
   </div>
 
@@ -956,6 +1023,8 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     <div class="card-header">
       <h2>Detection Log</h2>
       <div class="log-controls">
+        <input id="log-search" class="log-search" type="text" placeholder="Filter by sound or timestamp..." oninput="fetchDetections()">
+        <label class="log-check"><input id="log-audio-only" type="checkbox" onchange="fetchDetections()"> Recorded clips only</label>
         <select id="log-limit" onchange="fetchDetections()" style="background:var(--bg-dark); border:1px solid var(--border); color:var(--text); padding:4px 8px; border-radius:6px; font-size:0.75rem;">
           <option value="25">Last 25</option>
           <option value="50" selected>Last 50</option>
@@ -1269,10 +1338,16 @@ function recordSoundsChanged() {
 
 function updateRecordSoundSummary() {
   const summary = document.getElementById('record-sound-summary');
+  const pills = document.getElementById('record-sound-pills');
   const selected = selectedRecordSoundIndices
     .map(value => availableSounds.find(item => String(item.index) === String(value)))
     .filter(Boolean)
     .map(item => item.name);
+
+  pills.innerHTML = selected.length
+    ? selected.map(name => `<span class="pill">${name}</span>`).join('')
+    : '<span class="pill pill-empty">No sounds selected</span>';
+
   summary.textContent = selected.length
     ? (selected.length + ' selected: ' + selected.join(', '))
     : 'No recording sounds selected';
@@ -1577,6 +1652,99 @@ async function fetchChartData() {
       });
     }
   } catch(e) { console.error('Chart error:', e); }
+}
+
+function currentLogFilters() {
+  return {
+    count: document.getElementById('log-limit').value,
+    search: document.getElementById('log-search').value.trim(),
+    audio_only: document.getElementById('log-audio-only').checked ? '1' : '0',
+  };
+}
+
+function downloadCsv() {
+  window.location.href = '/api/download?' + new URLSearchParams(currentLogFilters()).toString();
+}
+
+async function fetchStatus() {
+  try {
+    const r = await fetch('/api/status');
+    const d = await r.json();
+    const el = document.getElementById('state');
+    el.textContent = d.running ? 'Listening' : 'Stopped';
+    el.className = 'stat-value ' + (d.running ? 'running' : 'stopped');
+    document.getElementById('sound-type').textContent = d.sound_type || 'â€”';
+    document.getElementById('count').textContent = d.total_logged || 0;
+    document.getElementById('uptime').textContent = d.uptime || 'â€”';
+    document.getElementById('header-status').textContent = d.running ? 'Listening for all sounds' : 'Stopped';
+    document.getElementById('header-status').style.color = d.running ? 'var(--green)' : 'var(--red)';
+    const dot = document.getElementById('header-dot');
+    dot.className = 'pulse-dot ' + (d.running ? 'running' : 'stopped');
+    const meterPct = audioMeterPercent(d.last_audio_db);
+    document.getElementById('audio-meter-fill').style.width = meterPct + '%';
+    document.getElementById('audio-meter-state').textContent = d.audio_present ? 'Audio detected' : 'Silent';
+    document.getElementById('audio-meter-state').style.color = d.audio_present ? 'var(--green)' : 'var(--text-dim)';
+    document.getElementById('audio-meter-db').textContent =
+      Number.isFinite(parseFloat(d.last_audio_db)) ? (d.last_audio_db + ' dB') : 'â€” dB';
+    document.getElementById('disk-free').textContent =
+      Number.isFinite(parseFloat(d.disk_free_gb)) ? (d.disk_free_gb + ' GB') : 'â€”';
+    document.getElementById('disk-free-pct').textContent =
+      Number.isFinite(parseFloat(d.disk_free_pct)) ? (d.disk_free_pct + '% free') : 'â€”';
+    document.getElementById('disk-total').textContent =
+      Number.isFinite(parseFloat(d.disk_total_gb)) ? ('of ' + d.disk_total_gb + ' GB') : 'â€”';
+
+    if (d.last_detection) {
+      const ld = d.last_detection;
+      document.getElementById('last-detection').textContent =
+        (ld.sound_type || 'Sound') + ' â€¢ ' + ld.timestamp + ' (' + ld.decibels + 'dB)';
+    }
+  } catch(e) {
+    document.getElementById('header-status').textContent = 'Connection error';
+    document.getElementById('header-status').style.color = 'var(--red)';
+  }
+}
+
+async function fetchDetections() {
+  try {
+    const filters = currentLogFilters();
+    const r = await fetch('/api/detections?' + new URLSearchParams(filters).toString());
+    const rows = await r.json();
+    const tbody = document.getElementById('detections');
+    const empty = document.getElementById('empty-state');
+
+    if (rows.length === 0) {
+      tbody.innerHTML = '';
+      empty.style.display = 'block';
+      empty.querySelector('p').textContent = filters.search || filters.audio_only === '1'
+        ? 'No detections match the current filters.'
+        : 'No detections yet. Listening...';
+      document.getElementById('log-count').textContent = '';
+      return;
+    }
+    empty.style.display = 'none';
+    document.getElementById('log-count').textContent = rows.length + ' matching events';
+
+    tbody.innerHTML = rows.map(r => {
+      const conf = parseFloat(r.confidence) || 0;
+      const pct = Math.min(conf * 100, 100);
+      const playBtn = r.audio_file
+        ? `<button onclick="playAudio('${r.audio_file}', this)" style="background:none; border:none; cursor:pointer; font-size:1.1rem; padding:2px 6px;" title="Play recording">â–¶</button>`
+        : '<span style="color:var(--text-dim); font-size:0.7rem;">â€”</span>';
+      return `<tr>
+        <td>${playBtn}</td>
+        <td style="white-space:nowrap;">${r.timestamp || ''}</td>
+        <td>${r.sound_type || ''}</td>
+        <td>${r.decibels || ''}dB</td>
+        <td>${r.frequency_hz || ''}Hz</td>
+        <td>
+          <span class="confidence-bar"><span class="confidence-fill" style="width:${pct}%; background:${confColor(r.confidence)};"></span></span>
+          ${r.confidence || ''}
+        </td>
+        <td>${r.duration_seconds || ''}s</td>
+        <td>${r.dog_size || ''}</td>
+      </tr>`;
+    }).join('');
+  } catch(e) { console.error(e); }
 }
 
 loadSettings();
