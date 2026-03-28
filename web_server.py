@@ -276,11 +276,12 @@ def create_app(sound_detector):
                             card, name, dev = m.group(1), m.group(2).strip(), m.group(3)
                             name_lower = name.lower()
 
-                            # For HAT devices, prefer using ALSA named device if available
+                            # For HAT devices, use ALSA default capture device
+                            # The seeed-voicecard driver configures /etc/asound.conf
+                            # with a dsnoop plugin routed through 'default' and 'capture'
                             if 'seeed' in name_lower or 'wm8960' in name_lower:
-                                # Try common ALSA names created by seeed-voicecard driver
-                                device_id = 'seeed-2mic-voicecard'
-                                label = f"{device_id} (HAT)"
+                                device_id = 'default'
+                                label = f"seeed-2mic-voicecard (HAT)"
                             else:
                                 device_id = f"hw:{card},{dev}"
                                 label = f"hw:{card},{dev} - {name}"
