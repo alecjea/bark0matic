@@ -26,6 +26,8 @@ class SoundDetector:
         self.detection_count = 0
         self.start_time = None
         self.last_detection = None
+        self.last_audio_db = None
+        self.audio_present = False
         self._thread = None
         self._stop_event = threading.Event()
 
@@ -57,6 +59,8 @@ class SoundDetector:
             "total_logged": self.logger.get_count(),
             "uptime": uptime,
             "last_detection": self.last_detection,
+            "last_audio_db": self.last_audio_db,
+            "audio_present": self.audio_present,
             "sound_type": "All sounds",
             "record_sound_indices": Config.RECORD_SOUND_INDICES,
             "threshold": Config.BARK_DETECTION_THRESHOLD,
@@ -88,6 +92,9 @@ class SoundDetector:
                     if wav_path and os.path.exists(wav_path):
                         os.unlink(wav_path)
                     continue
+
+                self.last_audio_db = round(features.get("decibels", -100.0), 1)
+                self.audio_present = self.last_audio_db > -65.0
 
                 matches, frequency, yamnet_scores = self.classifier.classify_all(
                     features, audio

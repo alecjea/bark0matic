@@ -528,6 +528,31 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   }
   .stat-value.running { color: var(--green); }
   .stat-value.stopped { color: var(--red); }
+  .meter-wrap {
+    margin-top: 8px;
+  }
+  .meter-bar {
+    width: 100%;
+    height: 10px;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.06);
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+  .meter-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--green), var(--orange), var(--red));
+    transition: width 0.2s ease;
+  }
+  .meter-meta {
+    margin-top: 6px;
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+  }
 
   /* ── Pulse dot ──────────────────────────────────────── */
   .pulse-dot {
@@ -779,6 +804,16 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       <div class="stat">
         <div class="stat-label">Last Detection</div>
         <div class="stat-value" id="last-detection" style="font-size:0.85rem;">—</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Audio Level</div>
+        <div class="meter-wrap">
+          <div class="meter-bar"><div class="meter-fill" id="audio-meter-fill"></div></div>
+          <div class="meter-meta">
+            <span id="audio-meter-state">Silent</span>
+            <span id="audio-meter-db">— dB</span>
+          </div>
+        </div>
       </div>
     </div>
     <div class="controls">
@@ -1084,6 +1119,12 @@ function confColor(c) {
   return 'var(--red)';
 }
 
+function audioMeterPercent(db) {
+  const value = parseFloat(db);
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(100, ((value + 80) / 80) * 100));
+}
+
 async function fetchStatus() {
   try {
     const r = await fetch('/api/status');
@@ -1098,6 +1139,12 @@ async function fetchStatus() {
     document.getElementById('header-status').style.color = d.running ? 'var(--green)' : 'var(--red)';
     const dot = document.getElementById('header-dot');
     dot.className = 'pulse-dot ' + (d.running ? 'running' : 'stopped');
+    const meterPct = audioMeterPercent(d.last_audio_db);
+    document.getElementById('audio-meter-fill').style.width = meterPct + '%';
+    document.getElementById('audio-meter-state').textContent = d.audio_present ? 'Audio detected' : 'Silent';
+    document.getElementById('audio-meter-state').style.color = d.audio_present ? 'var(--green)' : 'var(--text-dim)';
+    document.getElementById('audio-meter-db').textContent =
+      Number.isFinite(parseFloat(d.last_audio_db)) ? (d.last_audio_db + ' dB') : '— dB';
 
     if (d.last_detection) {
       const ld = d.last_detection;
