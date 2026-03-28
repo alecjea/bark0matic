@@ -193,6 +193,20 @@ def create_app(sound_detector):
             tz = Config.get_timezone()
             now = datetime.now(tz)
             rows = detector.logger.get_recent(50000)
+            selected_indices = []
+            for raw_value in request.args.getlist("record_sound_indices"):
+                try:
+                    selected_indices.append(int(raw_value))
+                except (TypeError, ValueError):
+                    continue
+            selected_set = set(selected_indices)
+            if selected_set:
+                rows = [
+                    row for row in rows
+                    if int(row.get("class_index", -1)) in selected_set
+                ]
+            else:
+                rows = []
 
             def parse_ts(ts_str):
                 for fmt in ("%Y-%m-%d %H:%M:%S %Z", "%Y-%m-%d %H:%M:%S"):
@@ -1420,6 +1434,8 @@ function recordSoundsChanged() {
   }
   selectedRecordSoundIndices = merged;
   updateRecordSoundSummary();
+  fetchChartData();
+  showToast('Recording selection changed. Click Save All Settings to apply it.', 'success');
 }
 
 function updateRecordSoundSummary() {
@@ -1434,13 +1450,15 @@ function updateRecordSoundSummary() {
     : '<span class="pill pill-empty">No sounds selected</span>';
 
   summary.textContent = selected.length
-    ? (selected.length + ' selected: ' + selected.map(item => item.name).join(', '))
-    : 'No recording sounds selected';
+    ? (selected.length + ' selected: ' + selected.map(item => item.name).join(', ') + ' | Click Save All Settings to apply changes')
+    : 'No recording sounds selected | Click Save All Settings to apply changes';
 }
 
 function removeRecordSound(index) {
   selectedRecordSoundIndices = selectedRecordSoundIndices.filter(value => String(value) !== String(index));
   renderRecordSoundOptions();
+  fetchChartData();
+  showToast('Recording selection changed. Click Save All Settings to apply it.', 'success');
 }
 
 async function saveSettings() {
@@ -1691,7 +1709,9 @@ function setChartPeriod(p) {
 
 async function fetchChartData() {
   try {
-    const r = await fetch('/api/chart-data?period=' + chartPeriod);
+    const params = new URLSearchParams({period: chartPeriod});
+    selectedRecordSoundIndices.forEach(value => params.append('record_sound_indices', value));
+    const r = await fetch('/api/chart-data?' + params.toString());
     const d = await r.json();
     if (d.error) return;
 
