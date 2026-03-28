@@ -25,6 +25,29 @@ if [ ! -f "$SERVICE_FILE" ]; then
   exit 1
 fi
 
+# ────────────────────────────────────────────────────────────
+# Step 0: Install ReSpeaker HAT driver if needed
+# ────────────────────────────────────────────────────────────
+if ! arecord -l 2>/dev/null | grep -qi 'seeed\|wm8960'; then
+  echo -e "${YELLOW}[0/2] Checking for audio HAT driver...${NC}"
+  # Check if a ReSpeaker-style HAT is physically connected via I2C
+  if command -v i2cdetect &>/dev/null && i2cdetect -y 1 2>/dev/null | grep -q '1a'; then
+    echo -e "${YELLOW}  ReSpeaker HAT detected but driver not installed. Installing...${NC}"
+    VOICECARD_DIR="/tmp/seeed-voicecard"
+    rm -rf "$VOICECARD_DIR"
+    git clone https://github.com/HinTak/seeed-voicecard "$VOICECARD_DIR"
+    cd "$VOICECARD_DIR" && sudo ./install.sh
+    cd "$SCRIPT_DIR"
+    echo -e "${GREEN}✓ ReSpeaker driver installed${NC}"
+    echo -e "${YELLOW}  ⚠ A reboot is required. Run: sudo reboot${NC}"
+    echo -e "${YELLOW}  Then re-run: bash install.sh${NC}"
+    exit 0
+  else
+    echo -e "${GREEN}✓ No HAT detected, skipping driver install${NC}"
+  fi
+  echo ""
+fi
+
 # Update WorkingDirectory and User in the service file to match current setup
 CURRENT_USER=$(whoami)
 sed "s|User=.*|User=$CURRENT_USER|;s|WorkingDirectory=.*|WorkingDirectory=$SCRIPT_DIR|" \
