@@ -4,7 +4,7 @@ import json
 import os
 import sqlite3
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from config import Config
 
@@ -97,6 +97,15 @@ class FileLogger:
 
         where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         return where_sql, params
+
+    def _parse_timestamp(self, timestamp):
+        """Parse a stored detection timestamp."""
+        for fmt in ("%Y-%m-%d %H:%M:%S %Z", "%Y-%m-%d %H:%M:%S"):
+            try:
+                return datetime.strptime((timestamp or "").strip(), fmt)
+            except ValueError:
+                continue
+        return None
 
     def log_event(
         self,
@@ -246,6 +255,37 @@ class FileLogger:
             print("[LOG] Log cleared")
         except Exception as exc:
             print(f"[ERROR] Failed to clear log: {exc}")
+            raise
+
+    def cleanup_old_events(self, days=30):
+        """Delete logged events older than the given number of days."""
+        cutoff = datetime.now(Config.get_timezone()).replace(tzinfo=None)
+        cutoff = cutoff - timedelta(days=days)
+
+        deleted_rows = 0
+        try:
+            with self._lock:
+                with self._connect() as conn:
+                    rows = conn.execute(
+                        "SELECT id, timestamp FROM detections"
+                    ).fetchall()
+                    ids_to_delete = []
+                    for row in rows:
+                        parsed = self._parse_timestamp(row["timestamp"])
+                        if parsed and parsed < cutoff:
+                            ids_to_delete.append(int(row["id"]))
+
+                    if ids_to_delete:
+                        placeholders = ",".join("?" for _ in ids_to_delete)
+                        conn.execute(
+                            f"DELETE FROM detections WHERE id IN ({placeholders})",
+                            ids_to_delete,
+                        )
+                        conn.commit()
+                    deleted_rows = len(ids_to_delete)
+            return {"deleted_logs": deleted_rows}
+        except Exception as exc:
+            print(f"[ERROR] Failed to cleanup old events: {exc}")
             raise
 
     def get_count(self):

@@ -990,7 +990,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           <span class="pill pill-empty">No sounds selected</span>
         </div>
         <div style="font-size:0.75rem; color:var(--text-dim); margin-top:8px;" id="record-sound-summary">No recording sounds selected</div>
-        <div class="field-warning" id="recording-disk-warning">Recording is currently disabled because disk usage is at or above 95%. Use Free Disk Space to delete recordings older than 30 days.</div>
+        <div class="field-warning" id="recording-disk-warning">Recording is currently disabled because disk usage is at or above 95%. Use Free Disk Space to delete recordings and log entries older than 30 days.</div>
       </div>
       <p style="font-size:0.75rem; color:var(--text-dim); margin-top:10px;">
         Barkomatic logs every non-speech YAMNet sound above threshold. Audio is only saved when the most prominent detected sound is one of the selected sounds.
@@ -1794,7 +1794,7 @@ async function fetchStatus() {
 }
 
 async function freeDiskSpace() {
-  if (!confirm('Delete recordings older than 30 days to free disk space?')) return;
+  if (!confirm('Delete recordings and log entries older than 30 days to free disk space?')) return;
 
   try {
     const res = await fetch('/api/free-disk-space', {
@@ -1810,7 +1810,7 @@ async function freeDiskSpace() {
     await fetchStatus();
     await fetchDetections();
     showToast(
-      'Deleted ' + data.deleted_files + ' old recording(s), freed ' + data.freed_mb + ' MB',
+      'Deleted ' + data.deleted_files + ' recording(s) and ' + data.deleted_logs + ' log(s), freed ' + data.freed_mb + ' MB',
       'success'
     );
   } catch (e) {

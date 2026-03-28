@@ -85,7 +85,7 @@ class SoundDetector:
         }
 
     def cleanup_old_recordings(self, days=30):
-        """Delete recordings older than the given number of days."""
+        """Delete recordings and logged events older than the given number of days."""
         cutoff = datetime.now() - timedelta(days=days)
         deleted_files = 0
         freed_bytes = 0
@@ -104,9 +104,12 @@ class SoundDetector:
             except FileNotFoundError:
                 continue
 
+        log_result = self.logger.cleanup_old_events(days=days)
+
         return {
             "deleted_files": deleted_files,
             "freed_mb": round(freed_bytes / (1024 ** 2), 1),
+            "deleted_logs": log_result["deleted_logs"],
         }
 
     def reload_config(self):
