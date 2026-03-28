@@ -40,13 +40,27 @@ def _sha256_file(path: Path) -> str:
 
 
 class SoundClassifier:
-    """Classifies audio using YAMNet TFLite model against configurable target classes."""
+    """Classifies audio using YAMNet TFLite model."""
+
+    SPEECH_LABEL_KEYWORDS = (
+        "speech",
+        "conversation",
+        "narration",
+        "monologue",
+        "babbling",
+        "whispering",
+        "whisper",
+        "child speech",
+        "synthetic speech",
+    )
 
     def __init__(self):
         self.threshold = Config.BARK_DETECTION_THRESHOLD
         self.source_sample_rate = Config.RPI_MICROPHONE_RATE
-        self.target_indices = Config.SOUND_TYPE_INDICES
         self.interpreter = None
+        self.class_labels = {}
+        self.available_sounds = []
+        self.excluded_sound_indices = set()
 
         if TFLITE_AVAILABLE:
             self._load_model()
@@ -83,44 +97,69 @@ class SoundClassifier:
         try:
             self.interpreter = tflite.Interpreter(model_path=str(model_path))
             self.interpreter.allocate_tensors()
-            self._log_target_classes(class_map_path)
+            self._load_class_map(class_map_path)
             print(
-                f"[INFO] YAMNet loaded. Detecting: {Config.SOUND_TYPE_NAME} "
-                f"(indices: {self.target_indices})"
+                f"[INFO] YAMNet loaded. Monitoring all sounds above "
+                f"threshold {self.threshold:.2f}"
             )
         except Exception as e:
             print(f"[ERROR] Failed to load YAMNet: {e}")
             self.interpreter = None
 
-    def _log_target_classes(self, class_map_path):
-        """Log the target class names from the class map."""
+    def _load_class_map(self, class_map_path):
+        """Load all available YAMNet classes and derive excluded speech classes."""
         try:
             with open(class_map_path, newline="") as f:
                 reader = csv.DictReader(f)
+                self.class_labels = {}
+                self.available_sounds = []
+                self.excluded_sound_indices = set()
                 for row in reader:
-                    if int(row["index"]) in self.target_indices:
-                        print(f"[INFO] Target class: [{row['index']}] {row['display_name']}")
-        except Exception:
-            pass
+                    index = int(row["index"])
+                    name = row["display_name"]
+                    self.class_labels[index] = name
+                    self.available_sounds.append({"index": index, "name": name})
+                    if self._is_human_speech_label(name):
+                        self.excluded_sound_indices.add(index)
+
+            print(f"[INFO] Loaded {len(self.available_sounds)} YAMNet sound classes")
+            if self.excluded_sound_indices:
+                print(f"[INFO] Excluding {len(self.excluded_sound_indices)} human speech classes from logging")
+        except Exception as e:
+            print(f"[WARN] Failed to load class map: {e}")
+            self.class_labels = {}
+            self.available_sounds = []
+            self.excluded_sound_indices = {0}
+
+    def _is_human_speech_label(self, name):
+        """Return True when a YAMNet class label represents human speech."""
+        name_lower = name.lower()
+        return any(keyword in name_lower for keyword in self.SPEECH_LABEL_KEYWORDS)
+
+    def get_available_sounds(self):
+        """Return all non-speech YAMNet sounds for UI selection."""
+        return [
+            sound for sound in self.available_sounds
+            if sound["index"] not in self.excluded_sound_indices
+        ]
 
     def reload_config(self):
-        """Reload threshold and indices from config (for live updates via web UI)."""
+        """Reload threshold from config (for live updates via web UI)."""
         self.threshold = Config.BARK_DETECTION_THRESHOLD
-        self.target_indices = Config.SOUND_TYPE_INDICES
 
-    def classify(self, features, raw_audio=None):
+    def classify_all(self, features, raw_audio=None):
         """
-        Classify audio against target sound classes.
+        Classify audio against all YAMNet sound classes.
 
         Args:
             features: Audio features dict from AudioProcessor
             raw_audio: Raw audio samples for YAMNet
 
         Returns:
-            tuple: (is_match, confidence, frequency)
+            tuple: (matches, frequency, all_scores)
         """
         if features is None:
-            return False, 0.0, 0.0
+            return [], 0.0, []
 
         frequency = features.get("spec_centroid_mean", 0.0)
 
@@ -149,21 +188,30 @@ class SoundClassifier:
 
                 scores = self.interpreter.get_tensor(output_details[0]["index"])
                 mean_scores = np.mean(scores, axis=0)
+                matches = []
+                for index, score in enumerate(mean_scores):
+                    confidence = float(score)
+                    if confidence < self.threshold:
+                        continue
+                    if index in self.excluded_sound_indices:
+                        continue
+                    matches.append({
+                        "index": index,
+                        "name": self.class_labels.get(index, f"Class {index}"),
+                        "confidence": confidence,
+                    })
 
-                confidence = (
-                    float(max(mean_scores[i] for i in self.target_indices))
-                    if self.target_indices
-                    else 0.0
-                )
-                is_match = confidence >= self.threshold
-                return is_match, confidence, frequency, mean_scores.tolist()
+                matches.sort(key=lambda item: item["confidence"], reverse=True)
+                return matches, frequency, mean_scores.tolist()
 
             except Exception as e:
                 print(f"[ERROR] YAMNet inference failed: {e}")
-                return False, 0.0, frequency, []
+                return [], frequency, []
 
-        is_match, confidence, frequency = self._heuristic_classify(features)
-        return is_match, confidence, frequency, []
+        is_match, _confidence, frequency = self._heuristic_classify(features)
+        if is_match:
+            print("[WARN] Heuristic mode cannot safely classify all sounds; skipping log event")
+        return [], frequency, []
 
     def _heuristic_classify(self, features):
         """Fallback heuristic classifier when YAMNet is unavailable."""
@@ -200,13 +248,20 @@ class SoundClassifier:
         confidence = sum(scores)
         return confidence >= self.threshold, float(confidence), float(spec_centroid)
 
-    def get_explanation(self, features, is_match, confidence):
+    def get_explanation(self, features, matches):
         """Human-readable explanation of classification result."""
         decibels = features.get("decibels", -np.inf) if features else -np.inf
         spec_centroid = features.get("spec_centroid_mean", 0) if features else 0
         engine = "YAMNet" if self.interpreter is not None else "heuristic"
-        result = "DETECTED" if is_match else "—"
+        if matches:
+            top = ", ".join(
+                f"{item['name']} ({item['confidence']:.2f})"
+                for item in matches[:3]
+            )
+            result = f"DETECTED {top}"
+        else:
+            result = "—"
         return (
-            f"{result} [{engine}] (confidence: {confidence:.2f}) | "
+            f"{result} [{engine}] | "
             f"dB: {decibels:.1f} | Freq: {spec_centroid:.0f}Hz"
         )

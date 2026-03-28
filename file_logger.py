@@ -14,6 +14,7 @@ class FileLogger:
 
     HEADER = [
         "timestamp",
+        "class_index",
         "sound_type",
         "decibels",
         "rms_energy",
@@ -29,9 +30,6 @@ class FileLogger:
         """Initialize the SQLite logger."""
         self.db_path = Config.LOG_DB_PATH
         self.csv_export_path = os.path.splitext(self.db_path)[0] + "_export.csv"
-        self.legacy_csv_path = os.path.join(
-            os.path.dirname(os.path.abspath(self.db_path)), "detections.csv"
-        )
         self._lock = threading.Lock()
         self._initialize_database()
         print(f"[LOG] Logging to {self.db_path}")
@@ -43,7 +41,7 @@ class FileLogger:
         return conn
 
     def _initialize_database(self):
-        """Create database and migrate legacy CSV data if needed."""
+        """Create the SQLite database if needed."""
         os.makedirs(os.path.dirname(os.path.abspath(self.db_path)), exist_ok=True)
 
         with self._connect() as conn:
@@ -52,6 +50,7 @@ class FileLogger:
                 CREATE TABLE IF NOT EXISTS detections (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     timestamp TEXT NOT NULL,
+                    class_index INTEGER NOT NULL DEFAULT -1,
                     sound_type TEXT NOT NULL,
                     decibels REAL NOT NULL,
                     rms_energy REAL NOT NULL,
@@ -64,57 +63,15 @@ class FileLogger:
                 )
                 """
             )
-            conn.commit()
-
-        self._migrate_legacy_csv_if_needed()
-
-    def _migrate_legacy_csv_if_needed(self):
-        """Import detections from the old CSV log if the database is empty."""
-        if not os.path.exists(self.legacy_csv_path) or self.legacy_csv_path == self.db_path:
-            return
-
-        with self._connect() as conn:
-            row = conn.execute("SELECT COUNT(*) AS count FROM detections").fetchone()
-            if row["count"] > 0:
-                return
-
-        try:
-            with open(self.legacy_csv_path, "r", newline="", encoding="utf-8") as handle:
-                reader = csv.DictReader(handle)
-                rows = list(reader)
-
-            if not rows:
-                return
-
-            with self._connect() as conn:
-                conn.executemany(
-                    """
-                    INSERT INTO detections (
-                        timestamp, sound_type, decibels, rms_energy, frequency_hz,
-                        confidence, duration_seconds, dog_size, audio_file, json_payload
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    [
-                        (
-                            (row.get("timestamp") or "").strip(),
-                            row.get("sound_type") or "",
-                            float(row.get("decibels") or 0),
-                            float(row.get("rms_energy") or 0),
-                            float(row.get("frequency_hz") or 0),
-                            float(row.get("confidence") or 0),
-                            float(row.get("duration_seconds") or 0),
-                            row.get("dog_size") or "",
-                            row.get("audio_file") or "",
-                            row.get("json_payload") or "",
-                        )
-                        for row in reversed(rows)
-                    ],
+            columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(detections)").fetchall()
+            }
+            if "class_index" not in columns:
+                conn.execute(
+                    "ALTER TABLE detections ADD COLUMN class_index INTEGER NOT NULL DEFAULT -1"
                 )
-                conn.commit()
-
-            print(f"[LOG] Migrated {len(rows)} legacy detections from CSV")
-        except Exception as exc:
-            print(f"[ERROR] Failed to migrate legacy CSV log: {exc}")
+            conn.commit()
 
     def _row_to_dict(self, row):
         """Normalize a SQLite row for API responses and exports."""
@@ -126,6 +83,8 @@ class FileLogger:
 
     def log_event(
         self,
+        sound_type,
+        class_index,
         decibels,
         frequency_hz,
         confidence,
@@ -140,7 +99,8 @@ class FileLogger:
         rms_energy = features.get("rms_energy", 0) if features else 0
 
         dog_size = ""
-        if Config.SOUND_TYPE_NAME.lower() in ("dog bark", "dog"):
+        sound_type_lower = (sound_type or "").lower()
+        if "dog" in sound_type_lower or "bark" in sound_type_lower:
             if frequency_hz < Config.DOG_SIZE_FREQUENCY_THRESHOLD:
                 dog_size = "Large dog"
             else:
@@ -148,7 +108,8 @@ class FileLogger:
 
         payload = {
             "timestamp": timestamp,
-            "sound_type": Config.SOUND_TYPE_NAME,
+            "class_index": class_index,
+            "sound_type": sound_type,
             "confidence": round(confidence, 4),
             "decibels": round(decibels, 2),
             "rms_energy": rms_energy,
@@ -174,13 +135,14 @@ class FileLogger:
                     conn.execute(
                         """
                         INSERT INTO detections (
-                            timestamp, sound_type, decibels, rms_energy, frequency_hz,
+                            timestamp, class_index, sound_type, decibels, rms_energy, frequency_hz,
                             confidence, duration_seconds, dog_size, audio_file, json_payload
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             timestamp,
-                            Config.SOUND_TYPE_NAME,
+                            int(class_index),
+                            sound_type,
                             round(decibels, 1),
                             float(rms_energy),
                             round(frequency_hz, 0),
@@ -195,7 +157,7 @@ class FileLogger:
 
             dog_info = f" | {dog_size}" if dog_size else ""
             print(
-                f"[LOG] {timestamp} | {Config.SOUND_TYPE_NAME} | "
+                f"[LOG] {timestamp} | {sound_type} | "
                 f"{decibels:.1f}dB | rms:{rms_energy:.4f} | {frequency_hz:.0f}Hz | "
                 f"conf:{confidence:.2f}{dog_info}"
             )
@@ -209,7 +171,7 @@ class FileLogger:
                 rows = conn.execute(
                     """
                     SELECT
-                        timestamp, sound_type, decibels, rms_energy, frequency_hz,
+                        timestamp, class_index, sound_type, decibels, rms_energy, frequency_hz,
                         confidence, duration_seconds, dog_size, audio_file, json_payload
                     FROM detections
                     ORDER BY id DESC
@@ -229,7 +191,7 @@ class FileLogger:
                 rows = conn.execute(
                     """
                     SELECT
-                        timestamp, sound_type, decibels, rms_energy, frequency_hz,
+                        timestamp, class_index, sound_type, decibels, rms_energy, frequency_hz,
                         confidence, duration_seconds, dog_size, audio_file, json_payload
                     FROM detections
                     ORDER BY id DESC

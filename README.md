@@ -13,12 +13,13 @@ Detects sounds (dog barks, music, sirens, and more) through a USB microphone usi
 
 - **AI Detection** — Google YAMNet (TensorFlow Lite), 521 AudioSet classes, runs fully offline
 - **19 Sound Types** — Dog bark, cat, bird, siren, fire alarm, glass breaking, gunshot, car horn, engine, crying, screaming, thunder, knocking, snoring, coughing, alarm clock, speech, music, and more
-- **Web Dashboard** — Real-time status, settings, detection log, software update button, clear log button, CSV export
+- **Web Dashboard** — Real-time status, searchable recording selection, settings, detection log, software update button, clear log button, CSV export
 - **Detection History Chart** — 24h/week/month bar chart showing detection patterns over time
 - **Dog Size Detection** — Estimates large vs small dog based on bark frequency (< 2000Hz = large)
 - **Audio Playback** — Every detection saves a WAV clip you can play back from the dashboard
 - **USB Mic Auto-Detection** — Detect, test, and save microphone via dashboard
-- **SQLite Logging** — Timestamped detections stored in `detections.db` with confidence, dB, frequency, and dog size
+- **SQLite Logging** — Timestamped detections for all non-speech sounds stored in `detections.db` with confidence, dB, frequency, and dog size
+- **Selective Recording** — Audio clips are only saved for up to 5 chosen sounds while all non-speech detections are still logged
 - **Timezone Support** — Configurable local timezone for accurate timestamps
 - **Systemd Service** — Auto-starts on boot, auto-restarts on crash
 - **Adjustable Sensitivity** — Confidence threshold (0.01–1.0), energy threshold, frequency range
@@ -81,8 +82,9 @@ You can also trigger the same GitHub update directly from the dashboard with the
 
 1. **Audio Capture** — Records 2-second chunks via `arecord` using ALSA (`plughw` for hardware resampling to 16kHz)
 2. **YAMNet Classification** — TFLite model scores each chunk against 521 sound classes
-3. **Threshold Check** — If confidence >= threshold, logs the detection
-4. **SQLite + Dashboard** — Detections are stored in `detections.db`, shown live in the web UI, and exported as CSV on demand
+3. **Threshold Check** — If confidence >= threshold, the sound is logged unless it is classified as human speech
+4. **Selective Recording** — A WAV clip is only saved when one of your chosen recordable sounds is present
+5. **SQLite + Dashboard** — Detections are stored in `detections.db`, shown live in the web UI, and exported as CSV on demand
 
 Audio is captured using `plughw:X,Y` so ALSA resamples to 16kHz regardless of what the USB mic natively supports.
 
@@ -94,6 +96,7 @@ Access at `http://<rpi-ip>:8080`
 
 - **Status** — Running/stopped indicator with pulsing dot, detection count, uptime
 - **Software Update** — Pull the latest version from GitHub and restart Barkomatic from the dashboard
+- **Recording Selection** — Search the full YAMNet sound list and choose up to 5 sounds that should save audio clips
 - **Detection History** — Bar chart with 24h/week/month toggle to spot patterns
 - **Sound Type** — Switch between 19 categories
 - **Microphone** — Detect, test, and save USB input device

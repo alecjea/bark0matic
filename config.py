@@ -11,8 +11,9 @@ class Config:
     """Configuration loaded from config.json with save support."""
 
     # Sound detection target
-    SOUND_TYPE_NAME = "Dog bark"
-    SOUND_TYPE_INDICES = [69, 70, 75]
+    SOUND_TYPE_NAME = "All sounds"
+    SOUND_TYPE_INDICES = []
+    RECORD_SOUND_INDICES = [69, 70, 75]
     LOCAL_TIMEZONE = "Australia/Melbourne"
 
     # Audio
@@ -52,12 +53,7 @@ class Config:
 
             for key, value in data.items():
                 key_upper = key.upper()
-                if key_upper == "LOG_FILE_PATH":
-                    if isinstance(value, str) and value.endswith(".csv"):
-                        cls.LOG_DB_PATH = str(Path(value).with_suffix(".db"))
-                    else:
-                        cls.LOG_DB_PATH = value
-                elif hasattr(cls, key_upper):
+                if hasattr(cls, key_upper):
                     setattr(cls, key_upper, value)
 
             print("[CONFIG] Configuration loaded from config.json")
@@ -70,6 +66,7 @@ class Config:
         data = {
             "sound_type_name": cls.SOUND_TYPE_NAME,
             "sound_type_indices": cls.SOUND_TYPE_INDICES,
+            "record_sound_indices": cls.RECORD_SOUND_INDICES,
             "local_timezone": cls.LOCAL_TIMEZONE,
             "rpi_microphone_device": cls.RPI_MICROPHONE_DEVICE,
             "rpi_microphone_rate": cls.RPI_MICROPHONE_RATE,
@@ -106,6 +103,7 @@ class Config:
         return {
             "sound_type_name": cls.SOUND_TYPE_NAME,
             "sound_type_indices": cls.SOUND_TYPE_INDICES,
+            "record_sound_indices": cls.RECORD_SOUND_INDICES,
             "local_timezone": cls.LOCAL_TIMEZONE,
             "microphone_device": cls.RPI_MICROPHONE_DEVICE,
             "threshold": cls.BARK_DETECTION_THRESHOLD,

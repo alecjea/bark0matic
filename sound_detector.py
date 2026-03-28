@@ -57,7 +57,8 @@ class SoundDetector:
             "total_logged": self.logger.get_count(),
             "uptime": uptime,
             "last_detection": self.last_detection,
-            "sound_type": Config.SOUND_TYPE_NAME,
+            "sound_type": "All sounds",
+            "record_sound_indices": Config.RECORD_SOUND_INDICES,
             "threshold": Config.BARK_DETECTION_THRESHOLD,
         }
 
@@ -72,7 +73,7 @@ class SoundDetector:
         self.running = True
         self.start_time = datetime.now()
 
-        print(f"[INFO] Starting detection for: {Config.SOUND_TYPE_NAME}")
+        print("[INFO] Starting detection for: all sounds")
         print(f"[INFO] Listening on device: {Config.RPI_MICROPHONE_DEVICE}")
         print(f"[INFO] Threshold: {Config.BARK_DETECTION_THRESHOLD}")
 
@@ -88,20 +89,22 @@ class SoundDetector:
                         os.unlink(wav_path)
                     continue
 
-                is_match, confidence, frequency, yamnet_scores = self.classifier.classify(
+                matches, frequency, yamnet_scores = self.classifier.classify_all(
                     features, audio
                 )
 
-                if is_match:
-                    self.detection_count += 1
-                    explanation = self.classifier.get_explanation(
-                        features, is_match, confidence
-                    )
+                if matches:
+                    self.detection_count += len(matches)
+                    explanation = self.classifier.get_explanation(features, matches)
                     print(f"[#{self.detection_count}] {explanation}")
 
-                    # Save audio clip
+                    should_record = any(
+                        match["index"] in set(Config.RECORD_SOUND_INDICES or [])
+                        for match in matches
+                    )
+
                     audio_filename = ""
-                    if wav_path and os.path.exists(wav_path):
+                    if should_record and wav_path and os.path.exists(wav_path):
                         now = datetime.now(Config.get_timezone())
                         audio_filename = now.strftime("%Y%m%d_%H%M%S") + ".wav"
                         dest = os.path.join(AUDIO_DIR, audio_filename)
@@ -109,22 +112,28 @@ class SoundDetector:
                         wav_path = None  # Don't delete below
                         print(f"[AUDIO] Saved clip: {audio_filename}")
 
-                    self.logger.log_event(
-                        decibels=features["decibels"],
-                        frequency_hz=frequency,
-                        confidence=confidence,
-                        features=features,
-                        audio_file=audio_filename,
-                        yamnet_scores=yamnet_scores,
-                    )
+                    for match in matches:
+                        self.logger.log_event(
+                            sound_type=match["name"],
+                            class_index=match["index"],
+                            decibels=features["decibels"],
+                            frequency_hz=frequency,
+                            confidence=match["confidence"],
+                            features=features,
+                            audio_file=audio_filename,
+                            yamnet_scores=yamnet_scores,
+                        )
+
+                    top_match = matches[0]
 
                     self.last_detection = {
                         "timestamp": datetime.now(
                             Config.get_timezone()
                         ).strftime("%Y-%m-%d %H:%M:%S %Z"),
+                        "sound_type": top_match["name"],
                         "decibels": round(features["decibels"], 1),
                         "frequency_hz": round(frequency, 0),
-                        "confidence": round(confidence, 3),
+                        "confidence": round(top_match["confidence"], 3),
                     }
 
                 # Clean up temp file if not saved

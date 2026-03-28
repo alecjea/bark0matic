@@ -10,8 +10,9 @@ All notable changes to Barkomatic are documented here.
 ### Changed
 - Detection log storage moved from `detections.csv` to SQLite `detections.db`
 - Dashboard CSV download now exports from SQLite on demand instead of reading a live CSV log file
-- Legacy `detections.csv` data is imported into SQLite automatically on first run when the database is empty
 - README and installer output updated to describe SQLite logging and CSV export behavior
+- Detection now logs all non-speech YAMNet sounds above threshold instead of a single configured sound
+- Dashboard recording settings now use a searchable YAMNet sound list and allow saving audio for up to 5 selected sounds
 
 ## [1.0.11] - 2026-03-23
 
