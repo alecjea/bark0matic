@@ -44,11 +44,15 @@ class AudioProcessor:
         import subprocess
         import re
 
+        # Names that indicate the onboard audio (no mic input)
+        ONBOARD_NAMES = {'bcm2835', 'vc4', 'hdmi'}
+
         # Use arecord -l to find real hardware devices
         try:
             result = subprocess.run(['arecord', '-l'], capture_output=True, text=True, timeout=5)
             if result.returncode == 0:
                 usb_devices = []
+                hat_devices = []
                 all_devices = []
 
                 for line in result.stdout.split('\n'):
@@ -56,19 +60,31 @@ class AudioProcessor:
                     if m:
                         card, name, dev = m.group(1), m.group(2).strip(), m.group(3)
                         hw_id = f"hw:{card},{dev}"
+                        name_lower = name.lower()
                         all_devices.append((hw_id, name))
-                        if 'usb' in name.lower():
+
+                        if 'usb' in name_lower:
                             usb_devices.append((hw_id, name))
+                        elif not any(ob in name_lower for ob in ONBOARD_NAMES):
+                            # Not USB and not onboard = likely a HAT/I2S mic
+                            hat_devices.append((hw_id, name))
 
-                # Prefer USB devices
-                if usb_devices:
-                    hw_id, name = usb_devices[0]
-                    print(f"[AUDIO] Auto-detected USB mic: {name} ({hw_id})")
-                    return hw_id
+                # Priority: USB mic > HAT/I2S mic > any non-onboard device
+                for category, label in [
+                    (usb_devices, "USB mic"),
+                    (hat_devices, "HAT/I2S mic"),
+                ]:
+                    if category:
+                        hw_id, name = category[0]
+                        print(f"[AUDIO] Auto-detected {label}: {name} ({hw_id})")
+                        return hw_id
 
-                # Fall back to any capture device
-                if all_devices:
-                    hw_id, name = all_devices[0]
+                # Fall back to any capture device (skip onboard if possible)
+                non_onboard = [(h, n) for h, n in all_devices
+                               if not any(ob in n.lower() for ob in ONBOARD_NAMES)]
+                fallback = non_onboard or all_devices
+                if fallback:
+                    hw_id, name = fallback[0]
                     print(f"[AUDIO] Using capture device: {name} ({hw_id})")
                     return hw_id
 
