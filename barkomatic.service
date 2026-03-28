@@ -4,8 +4,8 @@ After=network.target
 
 [Service]
 Type=simple
-User=justin
-WorkingDirectory=/home/justin/bark0matic
+User=__USER__
+WorkingDirectory=__WORKDIR__
 ExecStart=/usr/bin/python3 main.py
 Restart=always
 RestartSec=5

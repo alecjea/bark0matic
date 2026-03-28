@@ -656,10 +656,20 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     margin-top: 10px;
   }
   .field-hint {
-    font-size: 0.75rem;
-    color: var(--text-dim);
+    font-size: 0.9rem;
+    color: var(--accent);
     margin-top: 8px;
-    line-height: 1.4;
+    line-height: 1.5;
+    font-weight: 700;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid rgba(56, 189, 248, 0.28);
+    background: rgba(56, 189, 248, 0.08);
+  }
+  .field-subsection {
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
   }
   .pill {
     display: inline-flex;
@@ -672,6 +682,26 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     font-size: 0.75rem;
     font-weight: 600;
     line-height: 1;
+  }
+  .pill-button {
+    cursor: pointer;
+    font-family: inherit;
+    background: rgba(56, 189, 248, 0.12);
+    color: var(--accent);
+    border: 1px solid rgba(56, 189, 248, 0.28);
+    box-shadow: none;
+    transform: none;
+    gap: 8px;
+    padding: 6px 10px;
+  }
+  .pill-button:hover {
+    transform: none;
+    filter: brightness(1.08);
+  }
+  .pill-remove {
+    font-size: 0.7rem;
+    color: var(--text);
+    opacity: 0.85;
   }
   .pill-empty {
     color: var(--text-dim);
@@ -738,6 +768,31 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     font-variant-numeric: tabular-nums;
   }
   tr:hover td { background: rgba(56, 189, 248, 0.03); }
+  .play-btn {
+    min-width: 58px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(56, 189, 248, 0.28);
+    background: rgba(56, 189, 248, 0.08);
+    color: var(--accent);
+    font-size: 0.72rem;
+    font-weight: 700;
+    justify-content: center;
+  }
+  .play-btn.is-loading {
+    color: var(--text);
+    border-color: rgba(148, 163, 184, 0.3);
+  }
+  .play-btn.is-playing {
+    color: var(--orange);
+    border-color: rgba(251, 146, 60, 0.32);
+    background: rgba(251, 146, 60, 0.12);
+  }
+  .play-btn.is-error {
+    color: var(--red);
+    border-color: rgba(248, 113, 113, 0.32);
+    background: rgba(248, 113, 113, 0.12);
+  }
   .confidence-bar {
     width: 60px;
     height: 6px;
@@ -911,7 +966,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         <label>Sounds To Record (up to 5)</label>
         <input type="text" id="record_sound_search" placeholder="Search YAMNet sounds..." oninput="filterRecordSounds()">
         <select id="record_sound_indices" multiple size="10" onchange="recordSoundsChanged()"></select>
-        <div class="field-hint">Use Ctrl + click to add or remove multiple sounds. On Mac, use Cmd + click.</div>
+        <div class="field-hint">Use Ctrl + click to select multiple sounds, then click Save All Settings to apply them. On Mac, use Cmd + click. Click a selected tag below to remove it.</div>
         <div class="pill-list" id="record-sound-pills">
           <span class="pill pill-empty">No sounds selected</span>
         </div>
@@ -937,48 +992,36 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         <button class="btn-save" onclick="saveMic()">&#128190; Save</button>
       </div>
       <div id="mic-result" style="margin-top:10px; padding:10px; border-radius:8px; font-size:0.85rem; display:none;"></div>
+      <div class="field-subsection">
+        <div class="card-header" style="margin-bottom:14px;">
+          <h2>Thresholds</h2>
+        </div>
+        <div class="field" style="margin-bottom:14px;">
+          <label>Confidence Threshold</label>
+          <div class="range-row">
+            <input type="range" id="threshold" min="0.001" max="1" step="0.001"
+                   oninput="document.getElementById('threshold-val').textContent=this.value">
+            <span class="range-val" id="threshold-val">0.3</span>
+          </div>
+          <div style="display:flex; justify-content:space-between; font-size:0.65rem; color:var(--text-dim); margin-top:2px;">
+            <span>More sensitive</span><span>More accurate</span>
+          </div>
+        </div>
+        <div class="field">
+          <label>Energy Threshold (dB)</label>
+          <div class="range-row">
+            <input type="range" id="energy_threshold" min="-80" max="-10" step="5"
+                   oninput="document.getElementById('energy-val').textContent=this.value+'dB'">
+            <span class="range-val" id="energy-val">-60dB</span>
+          </div>
+          <div style="display:flex; justify-content:space-between; font-size:0.65rem; color:var(--text-dim); margin-top:2px;">
+            <span>Quieter sounds</span><span>Louder only</span>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- ── Sensitivity ─────────────────────────────────── -->
-    <div class="card">
-      <div class="card-header">
-        <h2>Sensitivity</h2>
-      </div>
-      <div class="field" style="margin-bottom:14px;">
-        <label>Confidence Threshold</label>
-        <div class="range-row">
-          <input type="range" id="threshold" min="0.001" max="1" step="0.001"
-                 oninput="document.getElementById('threshold-val').textContent=this.value">
-          <span class="range-val" id="threshold-val">0.3</span>
-        </div>
-        <div style="display:flex; justify-content:space-between; font-size:0.65rem; color:var(--text-dim); margin-top:2px;">
-          <span>More sensitive</span><span>More accurate</span>
-        </div>
-      </div>
-      <div class="field">
-        <label>Energy Threshold (dB)</label>
-        <div class="range-row">
-          <input type="range" id="energy_threshold" min="-80" max="-10" step="5"
-                 oninput="document.getElementById('energy-val').textContent=this.value+'dB'">
-          <span class="range-val" id="energy-val">-60dB</span>
-        </div>
-        <div style="display:flex; justify-content:space-between; font-size:0.65rem; color:var(--text-dim); margin-top:2px;">
-          <span>Quieter sounds</span><span>Louder only</span>
-        </div>
-      </div>
-      <div class="field" id="dog-size-field">
-        <label>Large / Small Dog Threshold (Hz)</label>
-        <div class="range-row">
-          <input type="range" id="dog_size_frequency_threshold" min="500" max="4000" step="100"
-                 oninput="updateDogSizeLabel(this.value)">
-          <span class="range-val" id="dog-size-val">2000Hz</span>
-        </div>
-        <div style="display:flex; justify-content:space-between; font-size:0.65rem; color:var(--text-dim); margin-top:2px;">
-          <span>&#x1F436; Large dog (&lt; <span id="dog-size-hz">2000</span>Hz)</span>
-          <span>Small dog (&gt; <span id="dog-size-hz2">2000</span>Hz) &#x1F436;</span>
-        </div>
-      </div>
-    </div>
   </div>
 
   <!-- ── Advanced Settings ─────────────────────────────── -->
@@ -1165,18 +1208,53 @@ let selectedRecordSoundIndices = [];
 
 let currentAudio = null;
 let currentBtn = null;
+function setPlayButtonState(btn, state) {
+  if (!btn) return;
+  btn.classList.remove('is-loading', 'is-playing', 'is-error');
+  if (state === 'loading') {
+    btn.classList.add('is-loading');
+    btn.textContent = '...';
+    return;
+  }
+  if (state === 'playing') {
+    btn.classList.add('is-playing');
+    btn.textContent = 'Stop';
+    return;
+  }
+  if (state === 'error') {
+    btn.classList.add('is-error');
+    btn.textContent = 'Error';
+    return;
+  }
+  btn.textContent = 'Play';
+}
+
 function playAudio(filename, btn) {
   if (currentAudio) {
+    if (currentBtn === btn) {
+      currentAudio.pause();
+      currentAudio = null;
+      setPlayButtonState(currentBtn, 'idle');
+      currentBtn = null;
+      return;
+    }
     currentAudio.pause();
     currentAudio = null;
-    if (currentBtn) { currentBtn.textContent = '▶'; currentBtn.style.color = ''; }
+    setPlayButtonState(currentBtn, 'idle');
   }
-  btn.textContent = '⏳';
+  setPlayButtonState(btn, 'loading');
   const audio = new Audio('/api/audio/' + encodeURIComponent(filename));
-  audio.oncanplay = () => { btn.textContent = '🔊'; btn.style.color = 'var(--orange)'; };
-  audio.onended = () => { btn.textContent = '▶'; btn.style.color = ''; currentAudio = null; currentBtn = null; };
-  audio.onerror = () => { btn.textContent = '❌'; btn.style.color = 'red'; setTimeout(() => { btn.textContent = '▶'; btn.style.color = ''; }, 2000); };
-  audio.play().catch(e => { btn.textContent = '❌'; btn.style.color = 'red'; setTimeout(() => { btn.textContent = '▶'; btn.style.color = ''; }, 2000); console.error('Playback failed:', e); });
+  audio.oncanplay = () => { setPlayButtonState(btn, 'playing'); };
+  audio.onended = () => { setPlayButtonState(btn, 'idle'); currentAudio = null; currentBtn = null; };
+  audio.onerror = () => {
+    setPlayButtonState(btn, 'error');
+    setTimeout(() => setPlayButtonState(btn, 'idle'), 2000);
+  };
+  audio.play().catch(e => {
+    setPlayButtonState(btn, 'error');
+    setTimeout(() => setPlayButtonState(btn, 'idle'), 2000);
+    console.error('Playback failed:', e);
+  });
   currentAudio = audio;
   currentBtn = btn;
 }
@@ -1279,11 +1357,6 @@ async function loadSettings() {
     document.getElementById('energy_threshold').value = d.energy_threshold;
     document.getElementById('energy-val').textContent = d.energy_threshold + 'dB';
 
-    // Dog size slider
-    const dsVal = d.dog_size_frequency_threshold || 2000;
-    document.getElementById('dog_size_frequency_threshold').value = dsVal;
-    updateDogSizeLabel(dsVal);
-
     // Advanced fields
     document.getElementById('min_frequency').value = d.min_frequency;
     document.getElementById('max_frequency').value = d.max_frequency;
@@ -1295,12 +1368,6 @@ async function loadSettings() {
     selectedRecordSoundIndices = (d.record_sound_indices || []).map(v => String(v));
     renderRecordSoundOptions();
   } catch(e) { console.error(e); }
-}
-
-function updateDogSizeLabel(hz) {
-  document.getElementById('dog-size-val').textContent = hz + 'Hz';
-  document.getElementById('dog-size-hz').textContent = hz;
-  document.getElementById('dog-size-hz2').textContent = hz;
 }
 
 function renderRecordSoundOptions() {
@@ -1341,16 +1408,20 @@ function updateRecordSoundSummary() {
   const pills = document.getElementById('record-sound-pills');
   const selected = selectedRecordSoundIndices
     .map(value => availableSounds.find(item => String(item.index) === String(value)))
-    .filter(Boolean)
-    .map(item => item.name);
+    .filter(Boolean);
 
   pills.innerHTML = selected.length
-    ? selected.map(name => `<span class="pill">${name}</span>`).join('')
+    ? selected.map(item => `<button type="button" class="pill pill-button" onclick="removeRecordSound('${item.index}')" title="Remove ${item.name}">${item.name}<span class="pill-remove">x</span></button>`).join('')
     : '<span class="pill pill-empty">No sounds selected</span>';
 
   summary.textContent = selected.length
-    ? (selected.length + ' selected: ' + selected.join(', '))
+    ? (selected.length + ' selected: ' + selected.map(item => item.name).join(', '))
     : 'No recording sounds selected';
+}
+
+function removeRecordSound(index) {
+  selectedRecordSoundIndices = selectedRecordSoundIndices.filter(value => String(value) !== String(index));
+  renderRecordSoundOptions();
 }
 
 async function saveSettings() {
@@ -1361,7 +1432,6 @@ async function saveSettings() {
     max_frequency: parseFloat(document.getElementById('max_frequency').value),
     chunk_size: parseFloat(document.getElementById('chunk_size').value),
     local_timezone: document.getElementById('local_timezone').value.trim(),
-    dog_size_frequency_threshold: parseInt(document.getElementById('dog_size_frequency_threshold').value),
     record_sound_indices: selectedRecordSoundIndices.map(value => parseInt(value, 10)),
   };
   try {
@@ -1728,7 +1798,7 @@ async function fetchDetections() {
       const conf = parseFloat(r.confidence) || 0;
       const pct = Math.min(conf * 100, 100);
       const playBtn = r.audio_file
-        ? `<button onclick="playAudio('${r.audio_file}', this)" style="background:none; border:none; cursor:pointer; font-size:1.1rem; padding:2px 6px;" title="Play recording">â–¶</button>`
+        ? `<button class="play-btn" onclick="playAudio('${r.audio_file}', this)" title="Play recording">Play</button>`
         : '<span style="color:var(--text-dim); font-size:0.7rem;">â€”</span>';
       return `<tr>
         <td>${playBtn}</td>
