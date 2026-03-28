@@ -1757,6 +1757,48 @@ async function fetchDetections() {
   } catch(e) { console.error(e); }
 }
 
+async function fetchDetections() {
+  try {
+    const filters = currentLogFilters();
+    const r = await fetch('/api/detections?' + new URLSearchParams(filters).toString());
+    const rows = await r.json();
+    const tbody = document.getElementById('detections');
+    const empty = document.getElementById('empty-state');
+
+    if (rows.length === 0) {
+      tbody.innerHTML = '';
+      empty.style.display = 'block';
+      empty.querySelector('p').textContent = filters.search || filters.audio_only === '1'
+        ? 'No detections match the current filters.'
+        : 'No detections yet. Listening...';
+      document.getElementById('log-count').textContent = '';
+      return;
+    }
+    empty.style.display = 'none';
+    document.getElementById('log-count').textContent = rows.length + ' matching events';
+
+    tbody.innerHTML = rows.map(r => {
+      const conf = parseFloat(r.confidence) || 0;
+      const pct = Math.min(conf * 100, 100);
+      const playBtn = r.audio_file
+        ? `<button class="play-btn" onclick="playAudio('${r.audio_file}', this)" title="Play recording">Play</button>`
+        : '<span style="color:var(--text-dim); font-size:0.7rem;">--</span>';
+      return `<tr>
+        <td>${playBtn}</td>
+        <td style="white-space:nowrap;">${r.timestamp || ''}</td>
+        <td>${r.sound_type || ''}</td>
+        <td>${r.decibels || ''}dB</td>
+        <td>${r.frequency_hz || ''}Hz</td>
+        <td>
+          <span class="confidence-bar"><span class="confidence-fill" style="width:${pct}%; background:${confColor(r.confidence)};"></span></span>
+          ${r.confidence || ''}
+        </td>
+        <td>${r.duration_seconds || ''}s</td>
+      </tr>`;
+    }).join('');
+  } catch (e) { console.error(e); }
+}
+
 loadSettings();
 fetchStatus();
 fetchDetections();
