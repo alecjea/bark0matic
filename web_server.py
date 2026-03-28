@@ -55,6 +55,11 @@ def create_app(sound_detector):
     def dashboard():
         return render_template_string(DASHBOARD_HTML, app_version=APP_VERSION)
 
+    @app.route("/changelog")
+    def changelog():
+        changelog_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "CHANGELOG.md")
+        return send_file(changelog_path, mimetype="text/markdown")
+
     @app.route("/api/status")
     def api_status():
         status = detector.get_status()
@@ -184,104 +189,6 @@ def create_app(sound_detector):
         if not os.path.exists(filepath):
             return jsonify({"error": "not found"}), 404
         return send_file(filepath, mimetype="audio/wav")
-
-    @app.route("/api/chart-data")
-    def api_chart_data():
-        """Return detection counts bucketed by period: 24h (hourly), week (daily), month (daily)."""
-        period = request.args.get("period", "24h")
-        try:
-            tz = Config.get_timezone()
-            now = datetime.now(tz)
-            rows = detector.logger.get_recent(50000)
-            selected_indices = []
-            for raw_value in request.args.getlist("record_sound_indices"):
-                try:
-                    selected_indices.append(int(raw_value))
-                except (TypeError, ValueError):
-                    continue
-            selected_set = set(selected_indices)
-            if selected_set:
-                rows = [
-                    row for row in rows
-                    if int(row.get("class_index", -1)) in selected_set
-                ]
-            else:
-                rows = []
-
-            def parse_ts(ts_str):
-                for fmt in ("%Y-%m-%d %H:%M:%S %Z", "%Y-%m-%d %H:%M:%S"):
-                    try:
-                        return datetime.strptime(ts_str.strip(), fmt)
-                    except ValueError:
-                        continue
-                return None
-
-            if period == "week":
-                n_buckets = 7
-                buckets = {}
-                for i in range(n_buckets):
-                    d = now - timedelta(days=n_buckets - 1 - i)
-                    key = d.strftime("%Y-%m-%d")
-                    buckets[key] = 0
-                for row in rows:
-                    ts = parse_ts(row.get("timestamp", ""))
-                    if ts:
-                        key = ts.strftime("%Y-%m-%d")
-                        if key in buckets:
-                            buckets[key] += 1
-                labels = []
-                counts = []
-                for i in range(n_buckets):
-                    d = now - timedelta(days=n_buckets - 1 - i)
-                    key = d.strftime("%Y-%m-%d")
-                    labels.append(d.strftime("%a %d"))
-                    counts.append(buckets.get(key, 0))
-
-            elif period == "month":
-                n_buckets = 30
-                buckets = {}
-                for i in range(n_buckets):
-                    d = now - timedelta(days=n_buckets - 1 - i)
-                    key = d.strftime("%Y-%m-%d")
-                    buckets[key] = 0
-                for row in rows:
-                    ts = parse_ts(row.get("timestamp", ""))
-                    if ts:
-                        key = ts.strftime("%Y-%m-%d")
-                        if key in buckets:
-                            buckets[key] += 1
-                labels = []
-                counts = []
-                for i in range(n_buckets):
-                    d = now - timedelta(days=n_buckets - 1 - i)
-                    key = d.strftime("%Y-%m-%d")
-                    labels.append(d.strftime("%d/%m"))
-                    counts.append(buckets.get(key, 0))
-
-            else:  # 24h default
-                n_buckets = 24
-                buckets = {}
-                for i in range(n_buckets):
-                    h = now - timedelta(hours=n_buckets - 1 - i)
-                    key = h.strftime("%Y-%m-%d %H")
-                    buckets[key] = 0
-                for row in rows:
-                    ts = parse_ts(row.get("timestamp", ""))
-                    if ts:
-                        key = ts.strftime("%Y-%m-%d %H")
-                        if key in buckets:
-                            buckets[key] += 1
-                labels = []
-                counts = []
-                for i in range(n_buckets):
-                    h = now - timedelta(hours=n_buckets - 1 - i)
-                    key = h.strftime("%Y-%m-%d %H")
-                    labels.append(h.strftime("%-I%p").lower())
-                    counts.append(buckets.get(key, 0))
-
-            return jsonify({"labels": labels, "counts": counts, "period": period})
-        except Exception as e:
-            return jsonify({"error": str(e)}), 500
 
     @app.route("/api/detect-microphone")
     def api_detect_microphone():
@@ -627,10 +534,6 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   .btn-save { background: var(--purple); color: #fff; }
   .btn-update { background: var(--orange); color: #000; }
   .btn-clear { background: transparent; border: 1px solid var(--border); color: var(--text-dim); }
-  .chart-period { background: transparent; border: 1px solid var(--border); color: var(--text-dim); padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 0.75rem; }
-  .chart-period.active { background: var(--orange); color: #000; border-color: var(--orange); font-weight: 600; }
-  .chart-period:hover:not(.active) { border-color: var(--text-dim); color: var(--text); }
-
   /* ── Form Fields ────────────────────────────────────── */
   .settings-grid {
     display: grid;
@@ -904,8 +807,21 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     .settings-grid { grid-template-columns: 1fr; }
     .header { flex-direction: column; gap: 8px; }
   }
+  .footer-link {
+    margin-top: 18px;
+    text-align: center;
+    font-size: 0.8rem;
+    color: var(--text-dim);
+  }
+  .footer-link a {
+    color: var(--accent);
+    text-decoration: none;
+    font-weight: 600;
+  }
+  .footer-link a:hover {
+    text-decoration: underline;
+  }
 </style>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
 
@@ -970,21 +886,6 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     <div class="controls">
       <button class="btn-start" onclick="control('start')">&#9654; Start</button>
       <button class="btn-stop" onclick="control('stop')">&#9632; Stop</button>
-    </div>
-  </div>
-
-  <!-- ── Detection History Chart ────────────────────────── -->
-  <div class="card">
-    <div class="card-header">
-      <h2>Detection History</h2>
-      <div style="display:flex; gap:4px;">
-        <button class="chart-period active" data-period="24h" onclick="setChartPeriod('24h')">24h</button>
-        <button class="chart-period" data-period="week" onclick="setChartPeriod('week')">Week</button>
-        <button class="chart-period" data-period="month" onclick="setChartPeriod('month')">Month</button>
-      </div>
-    </div>
-    <div style="position:relative; height:220px;">
-      <canvas id="historyChart"></canvas>
     </div>
   </div>
 
@@ -1133,6 +1034,10 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         <p>No detections yet. Listening...</p>
       </div>
     </div>
+  </div>
+
+  <div class="footer-link">
+    <a href="/changelog" target="_blank" rel="noopener noreferrer">View changelog</a>
   </div>
 
 </div>
@@ -1434,7 +1339,6 @@ function recordSoundsChanged() {
   }
   selectedRecordSoundIndices = merged;
   updateRecordSoundSummary();
-  fetchChartData();
   showToast('Recording selection changed. Click Save All Settings to apply it.', 'success');
 }
 
@@ -1457,7 +1361,6 @@ function updateRecordSoundSummary() {
 function removeRecordSound(index) {
   selectedRecordSoundIndices = selectedRecordSoundIndices.filter(value => String(value) !== String(index));
   renderRecordSoundOptions();
-  fetchChartData();
   showToast('Recording selection changed. Click Save All Settings to apply it.', 'success');
 }
 
@@ -1538,7 +1441,6 @@ async function waitForReconnect(timeoutMs = 90000) {
       if (res.ok) {
         await fetchStatus();
         await fetchDetections();
-        await fetchChartData();
         return true;
       }
     } catch (e) {
@@ -1694,73 +1596,6 @@ async function saveMic() {
     r.style.color = 'var(--red)';
     r.textContent = 'Save failed: ' + e.message;
   }
-}
-
-// ── Init ──────────────────────────────────────────────
-// ── Detection History Chart ──────────────────────────
-let historyChart = null;
-let chartPeriod = '24h';
-
-function setChartPeriod(p) {
-  chartPeriod = p;
-  document.querySelectorAll('.chart-period').forEach(b => b.classList.toggle('active', b.dataset.period === p));
-  fetchChartData();
-}
-
-async function fetchChartData() {
-  try {
-    const params = new URLSearchParams({period: chartPeriod});
-    selectedRecordSoundIndices.forEach(value => params.append('record_sound_indices', value));
-    const r = await fetch('/api/chart-data?' + params.toString());
-    const d = await r.json();
-    if (d.error) return;
-
-    const ctx = document.getElementById('historyChart').getContext('2d');
-    if (historyChart) {
-      historyChart.data.labels = d.labels;
-      historyChart.data.datasets[0].data = d.counts;
-      historyChart.data.datasets[0].backgroundColor = d.counts.map(c => c > 0 ? '#f97316' : 'rgba(255,255,255,0.05)');
-      historyChart.update();
-    } else {
-      historyChart = new Chart(ctx, {
-        type: 'bar',
-        data: {
-          labels: d.labels,
-          datasets: [{
-            label: 'Detections',
-            data: d.counts,
-            backgroundColor: d.counts.map(c => c > 0 ? '#f97316' : 'rgba(255,255,255,0.05)'),
-            borderRadius: 4,
-            borderSkipped: false,
-          }]
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {
-            legend: { display: false },
-            tooltip: {
-              callbacks: {
-                title: (items) => items[0].label,
-                label: (item) => item.raw + ' detection' + (item.raw !== 1 ? 's' : '')
-              }
-            }
-          },
-          scales: {
-            x: {
-              ticks: { color: '#9ca3af', font: { size: 10 }, maxRotation: 45 },
-              grid: { display: false }
-            },
-            y: {
-              beginAtZero: true,
-              ticks: { color: '#9ca3af', stepSize: 1, precision: 0 },
-              grid: { color: 'rgba(255,255,255,0.06)' }
-            }
-          }
-        }
-      });
-    }
-  } catch(e) { console.error('Chart error:', e); }
 }
 
 function currentLogFilters() {
@@ -1925,11 +1760,9 @@ async function fetchDetections() {
 loadSettings();
 fetchStatus();
 fetchDetections();
-fetchChartData();
 detectMics(true);
 setInterval(fetchStatus, 3000);
 setInterval(fetchDetections, 5000);
-setInterval(fetchChartData, 30000);
 </script>
 </body>
 </html>"""

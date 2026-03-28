@@ -2,6 +2,30 @@
 
 All notable changes to Barkomatic are documented here.
 
+## [1.0.23] - 2026-03-29
+
+### Added
+- Disk space safeguard that stops saving new audio recordings once disk usage reaches 95%
+- `Free Disk Space` action in the dashboard that deletes recordings and SQLite log entries older than 30 days
+- Live disk space status in the dashboard
+- Footer link in the dashboard to open the changelog
+
+### Changed
+- Detection history chart removed from the dashboard
+- Recording selection helper text now clearly explains multi-select and the need to save settings
+- Selected recording sounds now appear as removable tags
+- Detection log table now supports text filtering and recorded-only filtering, and CSV export respects the active filters
+- Threshold sliders moved into the microphone card
+- Recordings are only saved when the selected sound is the top detected match for that audio chunk
+- Playback controls in the detections table were restyled for clearer play/stop/error states
+
+### Fixed
+- Recording selection now supports removing a chosen sound by clicking its tag
+- Cleanup action now removes stale recordings and stale SQLite log rows together
+- Detection log table no longer shows the dog-size column
+- Human speech remains excluded from logged/recorded events while all other non-speech YAMNet matches are logged
+- Recording settings UX now consistently reminds the user that changes are not applied until `Save All Settings` is pressed
+
 ## [1.0.13] - 2026-03-28
 
 ### Added
