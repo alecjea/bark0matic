@@ -334,18 +334,23 @@ def create_app(sound_detector):
             tmp.close()
 
             try:
-                # Try mono first, fall back to stereo (some codecs like WM8960 require stereo)
+                # WM8960 and similar HAT codecs have strict hw param requirements
+                # Try different sample rates and let ALSA negotiate the params
                 recorded = False
-                for channels in [1, 2]:
-                    cmd = [
-                        'arecord', '-D', alsa_device,
-                        '-f', 'S16_LE', '-r', str(SAMPLE_RATE),
-                        '-c', str(channels), '-d', str(DURATION),
-                        '-t', 'wav', '-q', tmp_path
-                    ]
-                    result = subprocess.run(cmd, capture_output=True, timeout=DURATION + 5)
-                    if result.returncode == 0:
-                        recorded = True
+                for test_rate in [SAMPLE_RATE, 48000, 44100, 8000]:
+                    for channels in [1, 2]:
+                        cmd = [
+                            'arecord', '-D', alsa_device,
+                            '-f', 'S16_LE', '-r', str(test_rate),
+                            '-c', str(channels), '-d', str(DURATION),
+                            '-t', 'wav', tmp_path
+                        ]
+                        result = subprocess.run(cmd, capture_output=True, timeout=DURATION + 5)
+                        if result.returncode == 0:
+                            recorded = True
+                            working_rate = test_rate
+                            break
+                    if recorded:
                         break
 
                 if not recorded:

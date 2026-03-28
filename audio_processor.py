@@ -129,23 +129,29 @@ class AudioProcessor:
             tmp_path = tmp.name
             tmp.close()
 
-            # Try mono first, fall back to stereo (some codecs like WM8960 require stereo)
+            # WM8960 and similar HAT codecs have strict hw param requirements
+            # Try different sample rates and channels to find working config
             recorded = False
-            for channels in [1, 2]:
-                cmd = [
-                    'arecord',
-                    '-D', device,
-                    '-f', 'S16_LE',
-                    '-r', str(self.sample_rate),
-                    '-c', str(channels),
-                    '-d', str(int(duration)),
-                    '-t', 'wav',
-                    '-q',
-                    tmp_path
-                ]
-                result = subprocess.run(cmd, capture_output=True, timeout=int(duration) + 5)
-                if result.returncode == 0:
-                    recorded = True
+            working_rate = self.sample_rate
+            for test_rate in [self.sample_rate, 48000, 44100, 8000]:
+                for channels in [1, 2]:
+                    cmd = [
+                        'arecord',
+                        '-D', device,
+                        '-f', 'S16_LE',
+                        '-r', str(test_rate),
+                        '-c', str(channels),
+                        '-d', str(int(duration)),
+                        '-t', 'wav',
+                        '-q',
+                        tmp_path
+                    ]
+                    result = subprocess.run(cmd, capture_output=True, timeout=int(duration) + 5)
+                    if result.returncode == 0:
+                        recorded = True
+                        working_rate = test_rate
+                        break
+                if recorded:
                     break
 
             if not recorded:
@@ -154,12 +160,26 @@ class AudioProcessor:
                     os.unlink(tmp_path)
                 return None, None
 
+            # Log if we had to use a different rate
+            if working_rate != self.sample_rate:
+                print(f"[AUDIO] Using {working_rate}Hz (requested {self.sample_rate}Hz)")
+
             with wave.open(tmp_path, 'rb') as wf:
                 frames = wf.readframes(wf.getnframes())
-                audio = np.frombuffer(frames, dtype=np.int16)
+                audio = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
                 # Convert stereo to mono if needed
                 if wf.getnchannels() == 2:
-                    audio = audio.reshape(-1, 2).mean(axis=1).astype(np.int16)
+                    audio = audio.reshape(-1, 2).mean(axis=1)
+
+                # Resample if needed (e.g., recorded at 48kHz but expecting 16kHz)
+                if working_rate != self.sample_rate:
+                    ratio = self.sample_rate / working_rate
+                    num_samples = int(len(audio) * ratio)
+                    # Simple linear interpolation resampling
+                    indices = np.linspace(0, len(audio) - 1, num_samples)
+                    audio = np.interp(indices, np.arange(len(audio)), audio)
+
+                audio = (audio * 32768.0).astype(np.int16)
 
             return audio.flatten(), tmp_path
         except Exception as e:
