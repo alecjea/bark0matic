@@ -999,7 +999,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         <label>Sounds To Record (up to 5)</label>
         <input type="text" id="record_sound_search" placeholder="Search YAMNet sounds..." oninput="filterRecordSounds()">
         <select id="record_sound_indices" multiple size="10" onchange="recordSoundsChanged()"></select>
-        <div class="field-hint">Use Ctrl + click to select multiple sounds, then click Save All Settings to apply them. On Mac, use Cmd + click. Click a selected tag below to remove it.</div>
+        <div class="field-hint">Select multiple sounds with Ctrl + click (or Cmd + click on Mac), then press Save All Settings.<br>Click a selected tag to remove it.</div>
         <div class="pill-list" id="record-sound-pills">
           <span class="pill pill-empty">No sounds selected</span>
         </div>
