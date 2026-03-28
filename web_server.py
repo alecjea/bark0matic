@@ -314,7 +314,7 @@ def create_app(sound_detector):
             import tempfile
             import os
 
-            SAMPLE_RATE = 44100
+            SAMPLE_RATE = Config.RPI_MICROPHONE_RATE
             DURATION = 2
 
             # Stop detector to free the mic
