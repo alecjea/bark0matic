@@ -262,6 +262,7 @@ def create_app(sound_detector):
         """Detect available audio input devices."""
         try:
             import subprocess
+            import re
 
             devices = []
 
@@ -269,15 +270,25 @@ def create_app(sound_detector):
             try:
                 result = subprocess.run(['arecord', '-l'], capture_output=True, text=True, timeout=5)
                 if result.returncode == 0:
-                    import re
                     for line in result.stdout.split('\n'):
                         m = re.match(r'card (\d+):.*\[(.+?)\].*device (\d+):', line)
                         if m:
                             card, name, dev = m.group(1), m.group(2).strip(), m.group(3)
+                            name_lower = name.lower()
+
+                            # For HAT devices, prefer using ALSA named device if available
+                            if 'seeed' in name_lower or 'wm8960' in name_lower:
+                                # Try common ALSA names created by seeed-voicecard driver
+                                device_id = 'seeed-2mic-voicecard'
+                                label = f"{device_id} (HAT)"
+                            else:
+                                device_id = f"hw:{card},{dev}"
+                                label = f"hw:{card},{dev} - {name}"
+
                             devices.append({
-                                "id": f"hw:{card},{dev}",
+                                "id": device_id,
                                 "name": name,
-                                "label": f"hw:{card},{dev} - {name}"
+                                "label": label
                             })
             except:
                 pass
@@ -334,26 +345,15 @@ def create_app(sound_detector):
             tmp.close()
 
             try:
-                # WM8960 and similar HAT codecs have strict hw param requirements
-                # Try different sample rates and let ALSA negotiate the params
-                recorded = False
-                for test_rate in [SAMPLE_RATE, 48000, 44100, 8000]:
-                    for channels in [1, 2]:
-                        cmd = [
-                            'arecord', '-D', alsa_device,
-                            '-f', 'S16_LE', '-r', str(test_rate),
-                            '-c', str(channels), '-d', str(DURATION),
-                            '-t', 'wav', tmp_path
-                        ]
-                        result = subprocess.run(cmd, capture_output=True, timeout=DURATION + 5)
-                        if result.returncode == 0:
-                            recorded = True
-                            working_rate = test_rate
-                            break
-                    if recorded:
-                        break
+                cmd = [
+                    'arecord', '-D', alsa_device,
+                    '-f', 'S16_LE', '-r', str(SAMPLE_RATE),
+                    '-c', '1', '-d', str(DURATION),
+                    '-t', 'wav', '-q', tmp_path
+                ]
+                result = subprocess.run(cmd, capture_output=True, timeout=DURATION + 5)
 
-                if not recorded:
+                if result.returncode != 0:
                     raise RuntimeError(f"arecord failed: {result.stderr.decode().strip()}")
 
                 with wave.open(tmp_path, 'rb') as wf:
@@ -361,7 +361,7 @@ def create_app(sound_detector):
                     audio = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
                     # Convert stereo to mono if needed
                     if wf.getnchannels() == 2:
-                        audio = (audio[0::2] + audio[1::2]) / 2.0
+                        audio = audio.reshape(-1, 2).mean(axis=1)
             finally:
                 if os.path.exists(tmp_path):
                     os.unlink(tmp_path)
