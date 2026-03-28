@@ -129,20 +129,26 @@ class AudioProcessor:
             tmp_path = tmp.name
             tmp.close()
 
-            cmd = [
-                'arecord',
-                '-D', device,
-                '-f', 'S16_LE',
-                '-r', str(self.sample_rate),
-                '-c', '1',
-                '-d', str(int(duration)),
-                '-t', 'wav',
-                '-q',
-                tmp_path
-            ]
-            result = subprocess.run(cmd, capture_output=True, timeout=int(duration) + 5)
+            # Try mono first, fall back to stereo (some codecs like WM8960 require stereo)
+            recorded = False
+            for channels in [1, 2]:
+                cmd = [
+                    'arecord',
+                    '-D', device,
+                    '-f', 'S16_LE',
+                    '-r', str(self.sample_rate),
+                    '-c', str(channels),
+                    '-d', str(int(duration)),
+                    '-t', 'wav',
+                    '-q',
+                    tmp_path
+                ]
+                result = subprocess.run(cmd, capture_output=True, timeout=int(duration) + 5)
+                if result.returncode == 0:
+                    recorded = True
+                    break
 
-            if result.returncode != 0:
+            if not recorded:
                 print(f"[ERROR] arecord failed: {result.stderr.decode()}")
                 if os.path.exists(tmp_path):
                     os.unlink(tmp_path)
@@ -151,6 +157,9 @@ class AudioProcessor:
             with wave.open(tmp_path, 'rb') as wf:
                 frames = wf.readframes(wf.getnframes())
                 audio = np.frombuffer(frames, dtype=np.int16)
+                # Convert stereo to mono if needed
+                if wf.getnchannels() == 2:
+                    audio = audio.reshape(-1, 2).mean(axis=1).astype(np.int16)
 
             return audio.flatten(), tmp_path
         except Exception as e:

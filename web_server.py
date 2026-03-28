@@ -325,6 +325,8 @@ def create_app(sound_detector):
 
             print(f"[MIC] Testing device: {device}")
             raw_device = device if device and device != "auto" else "hw:2,0"
+            # For HAT devices like seeed-2mic-voicecard, use the ALSA plugin device
+            # which handles format/rate/channel conversion properly
             alsa_device = raw_device.replace("hw:", "plughw:", 1) if raw_device.startswith("hw:") else raw_device
 
             tmp = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
@@ -332,20 +334,29 @@ def create_app(sound_detector):
             tmp.close()
 
             try:
-                cmd = [
-                    'arecord', '-D', alsa_device,
-                    '-f', 'S16_LE', '-r', str(SAMPLE_RATE),
-                    '-c', '1', '-d', str(DURATION),
-                    '-t', 'wav', '-q', tmp_path
-                ]
-                result = subprocess.run(cmd, capture_output=True, timeout=DURATION + 5)
+                # Try mono first, fall back to stereo (some codecs like WM8960 require stereo)
+                recorded = False
+                for channels in [1, 2]:
+                    cmd = [
+                        'arecord', '-D', alsa_device,
+                        '-f', 'S16_LE', '-r', str(SAMPLE_RATE),
+                        '-c', str(channels), '-d', str(DURATION),
+                        '-t', 'wav', '-q', tmp_path
+                    ]
+                    result = subprocess.run(cmd, capture_output=True, timeout=DURATION + 5)
+                    if result.returncode == 0:
+                        recorded = True
+                        break
 
-                if result.returncode != 0:
+                if not recorded:
                     raise RuntimeError(f"arecord failed: {result.stderr.decode().strip()}")
 
                 with wave.open(tmp_path, 'rb') as wf:
                     frames = wf.readframes(wf.getnframes())
                     audio = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
+                    # Convert stereo to mono if needed
+                    if wf.getnchannels() == 2:
+                        audio = (audio[0::2] + audio[1::2]) / 2.0
             finally:
                 if os.path.exists(tmp_path):
                     os.unlink(tmp_path)
