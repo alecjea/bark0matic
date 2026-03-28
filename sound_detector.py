@@ -3,7 +3,7 @@ import os
 import shutil
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from config import Config
 from audio_processor import AudioProcessor
 from sound_classifier import SoundClassifier
@@ -34,6 +34,22 @@ class SoundDetector:
         # Ensure recordings directory exists
         os.makedirs(AUDIO_DIR, exist_ok=True)
 
+    def _get_disk_stats(self):
+        """Return current disk usage stats for the recordings volume."""
+        disk = shutil.disk_usage(AUDIO_DIR)
+        free_gb = round(disk.free / (1024 ** 3), 1)
+        total_gb = round(disk.total / (1024 ** 3), 1)
+        free_pct = round((disk.free / disk.total) * 100, 1) if disk.total else 0.0
+        used_pct = round(100.0 - free_pct, 1)
+        recording_blocked = used_pct >= 95.0
+        return {
+            "disk_free_gb": free_gb,
+            "disk_total_gb": total_gb,
+            "disk_free_pct": free_pct,
+            "disk_used_pct": used_pct,
+            "recording_blocked_low_disk": recording_blocked,
+        }
+
     def start(self):
         """Start detection in a background thread."""
         if self.running:
@@ -52,10 +68,7 @@ class SoundDetector:
         uptime = None
         if self.start_time:
             uptime = str(datetime.now() - self.start_time).split(".")[0]
-        disk = shutil.disk_usage(AUDIO_DIR)
-        free_gb = round(disk.free / (1024 ** 3), 1)
-        total_gb = round(disk.total / (1024 ** 3), 1)
-        free_pct = round((disk.free / disk.total) * 100, 1) if disk.total else 0.0
+        disk_stats = self._get_disk_stats()
 
         return {
             "running": self.running,
@@ -68,9 +81,32 @@ class SoundDetector:
             "sound_type": "All sounds",
             "record_sound_indices": Config.RECORD_SOUND_INDICES,
             "threshold": Config.BARK_DETECTION_THRESHOLD,
-            "disk_free_gb": free_gb,
-            "disk_total_gb": total_gb,
-            "disk_free_pct": free_pct,
+            **disk_stats,
+        }
+
+    def cleanup_old_recordings(self, days=30):
+        """Delete recordings older than the given number of days."""
+        cutoff = datetime.now() - timedelta(days=days)
+        deleted_files = 0
+        freed_bytes = 0
+
+        for entry in os.scandir(AUDIO_DIR):
+            if not entry.is_file():
+                continue
+            try:
+                modified = datetime.fromtimestamp(entry.stat().st_mtime)
+                if modified >= cutoff:
+                    continue
+                size = entry.stat().st_size
+                os.unlink(entry.path)
+                deleted_files += 1
+                freed_bytes += size
+            except FileNotFoundError:
+                continue
+
+        return {
+            "deleted_files": deleted_files,
+            "freed_mb": round(freed_bytes / (1024 ** 2), 1),
         }
 
     def reload_config(self):
@@ -113,7 +149,11 @@ class SoundDetector:
                     print(f"[#{self.detection_count}] {explanation}")
                     top_match = matches[0]
 
-                    should_record = top_match["index"] in set(Config.RECORD_SOUND_INDICES or [])
+                    disk_stats = self._get_disk_stats()
+                    should_record = (
+                        top_match["index"] in set(Config.RECORD_SOUND_INDICES or [])
+                        and not disk_stats["recording_blocked_low_disk"]
+                    )
 
                     audio_filename = ""
                     if should_record and wav_path and os.path.exists(wav_path):

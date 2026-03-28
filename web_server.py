@@ -135,6 +135,14 @@ def create_app(sound_detector):
         except Exception as e:
             return jsonify({"status": "error", "message": str(e)}), 500
 
+    @app.route("/api/free-disk-space", methods=["POST"])
+    def api_free_disk_space():
+        try:
+            result = detector.cleanup_old_recordings(days=30)
+            return jsonify({"status": "ok", **result})
+        except Exception as e:
+            return jsonify({"status": "error", "message": str(e)}), 500
+
     @app.route("/api/download")
     def api_download():
         search = request.args.get("search", "", type=str)
@@ -666,6 +674,17 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     border: 1px solid rgba(56, 189, 248, 0.28);
     background: rgba(56, 189, 248, 0.08);
   }
+  .field-warning {
+    margin-top: 10px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid rgba(248, 113, 113, 0.28);
+    background: rgba(248, 113, 113, 0.1);
+    color: var(--red);
+    font-size: 0.82rem;
+    line-height: 1.45;
+    display: none;
+  }
   .field-subsection {
     margin-top: 18px;
     padding-top: 16px;
@@ -971,6 +990,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           <span class="pill pill-empty">No sounds selected</span>
         </div>
         <div style="font-size:0.75rem; color:var(--text-dim); margin-top:8px;" id="record-sound-summary">No recording sounds selected</div>
+        <div class="field-warning" id="recording-disk-warning">Recording is currently disabled because disk usage is at or above 95%. Use Free Disk Space to delete recordings older than 30 days.</div>
       </div>
       <p style="font-size:0.75rem; color:var(--text-dim); margin-top:10px;">
         Barkomatic logs every non-speech YAMNet sound above threshold. Audio is only saved when the most prominent detected sound is one of the selected sounds.
@@ -1057,6 +1077,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     <div style="margin-top:14px; display:flex; gap:10px;">
       <button class="btn-save" onclick="saveSettings()">Save All Settings</button>
       <button class="btn-update" onclick="updateSoftware()">&#10227; Update Software</button>
+      <button class="btn-clear" onclick="freeDiskSpace()">Free Disk Space</button>
       <button class="btn-download" onclick="downloadCsv()">&#11015; Download CSV</button>
     </div>
   </div>
@@ -1089,7 +1110,6 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             <th>Frequency</th>
             <th>Confidence</th>
             <th>Duration</th>
-            <th>Dog Size</th>
           </tr>
         </thead>
         <tbody id="detections"></tbody>
@@ -1338,7 +1358,6 @@ async function fetchDetections() {
           ${r.confidence || ''}
         </td>
         <td>${r.duration_seconds || ''}s</td>
-        <td>${r.dog_size || ''}</td>
       </tr>`;
     }).join('');
   } catch(e) { console.error(e); }
@@ -1774,6 +1793,73 @@ async function fetchStatus() {
   }
 }
 
+async function freeDiskSpace() {
+  if (!confirm('Delete recordings older than 30 days to free disk space?')) return;
+
+  try {
+    const res = await fetch('/api/free-disk-space', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'}
+    });
+    const data = await res.json();
+
+    if (!res.ok || data.status !== 'ok') {
+      throw new Error(data.message || 'Cleanup failed');
+    }
+
+    await fetchStatus();
+    await fetchDetections();
+    showToast(
+      'Deleted ' + data.deleted_files + ' old recording(s), freed ' + data.freed_mb + ' MB',
+      'success'
+    );
+  } catch (e) {
+    showToast('Failed to free disk space: ' + e.message, 'error');
+  }
+}
+
+async function fetchStatus() {
+  try {
+    const r = await fetch('/api/status');
+    const d = await r.json();
+    const el = document.getElementById('state');
+    el.textContent = d.running ? 'Listening' : 'Stopped';
+    el.className = 'stat-value ' + (d.running ? 'running' : 'stopped');
+    document.getElementById('sound-type').textContent = d.sound_type || '--';
+    document.getElementById('count').textContent = d.total_logged || 0;
+    document.getElementById('uptime').textContent = d.uptime || '--';
+    document.getElementById('header-status').textContent = d.running ? 'Listening for all sounds' : 'Stopped';
+    document.getElementById('header-status').style.color = d.running ? 'var(--green)' : 'var(--red)';
+    const dot = document.getElementById('header-dot');
+    dot.className = 'pulse-dot ' + (d.running ? 'running' : 'stopped');
+    const meterPct = audioMeterPercent(d.last_audio_db);
+    document.getElementById('audio-meter-fill').style.width = meterPct + '%';
+    document.getElementById('audio-meter-state').textContent = d.audio_present ? 'Audio detected' : 'Silent';
+    document.getElementById('audio-meter-state').style.color = d.audio_present ? 'var(--green)' : 'var(--text-dim)';
+    document.getElementById('audio-meter-db').textContent =
+      Number.isFinite(parseFloat(d.last_audio_db)) ? (d.last_audio_db + ' dB') : '-- dB';
+    document.getElementById('disk-free').textContent =
+      Number.isFinite(parseFloat(d.disk_free_gb)) ? (d.disk_free_gb + ' GB') : '--';
+    document.getElementById('disk-free-pct').textContent =
+      Number.isFinite(parseFloat(d.disk_free_pct)) ? (d.disk_free_pct + '% free') : '--';
+    document.getElementById('disk-total').textContent =
+      Number.isFinite(parseFloat(d.disk_total_gb)) ? ('of ' + d.disk_total_gb + ' GB') : '--';
+    document.getElementById('disk-free').style.color = d.recording_blocked_low_disk ? 'var(--red)' : '';
+    document.getElementById('disk-free-pct').style.color = d.recording_blocked_low_disk ? 'var(--red)' : '';
+    document.getElementById('recording-disk-warning').style.display =
+      d.recording_blocked_low_disk ? 'block' : 'none';
+
+    if (d.last_detection) {
+      const ld = d.last_detection;
+      document.getElementById('last-detection').textContent =
+        (ld.sound_type || 'Sound') + ' | ' + ld.timestamp + ' (' + ld.decibels + 'dB)';
+    }
+  } catch (e) {
+    document.getElementById('header-status').textContent = 'Connection error';
+    document.getElementById('header-status').style.color = 'var(--red)';
+  }
+}
+
 async function fetchDetections() {
   try {
     const filters = currentLogFilters();
@@ -1811,7 +1897,6 @@ async function fetchDetections() {
           ${r.confidence || ''}
         </td>
         <td>${r.duration_seconds || ''}s</td>
-        <td>${r.dog_size || ''}</td>
       </tr>`;
     }).join('');
   } catch(e) { console.error(e); }
