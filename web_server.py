@@ -8,7 +8,7 @@ from config import Config
 # Will be set by main.py
 detector = None
 
-# Sound categories (mirrored from setup_allinone.sh for the web UI)
+# Fallback categories when the full YAMNet class map is unavailable.
 SOUND_CATEGORIES = [
     {"name": "Dog bark", "indices": [69, 70, 75]},
     {"name": "Cat meow", "indices": [76, 78]},
@@ -27,7 +27,6 @@ SOUND_CATEGORIES = [
     {"name": "Engine / motor", "indices": [337]},
     {"name": "Loud engine revving", "indices": [337, 343, 347]},
     {"name": "Alarm clock", "indices": [390]},
-    {"name": "Speech / talking", "indices": [0]},
     {"name": "Music", "indices": [132, 249]},
 ]
 
@@ -71,7 +70,11 @@ def create_app(sound_detector):
     @app.route("/api/settings", methods=["GET"])
     def api_get_settings():
         data = Config.to_dict()
-        data["sound_categories"] = SOUND_CATEGORIES
+        available_sounds = detector.classifier.get_available_sounds() if detector else []
+        data["available_sounds"] = available_sounds or [
+            {"name": item["name"], "index": item["indices"][0]}
+            for item in SOUND_CATEGORIES
+        ]
         return jsonify(data)
 
     @app.route("/api/settings", methods=["POST"])
@@ -91,13 +94,20 @@ def create_app(sound_detector):
             Config.BARK_DETECTION_CHUNK_SIZE = float(data["chunk_size"])
         if "dog_size_frequency_threshold" in data:
             Config.DOG_SIZE_FREQUENCY_THRESHOLD = int(data["dog_size_frequency_threshold"])
-        if "sound_type_name" in data:
-            Config.SOUND_TYPE_NAME = data["sound_type_name"]
-            # Find matching indices
-            for cat in SOUND_CATEGORIES:
-                if cat["name"] == data["sound_type_name"]:
-                    Config.SOUND_TYPE_INDICES = cat["indices"]
+        Config.SOUND_TYPE_NAME = "All sounds"
+        Config.SOUND_TYPE_INDICES = []
+        if "record_sound_indices" in data:
+            indices = []
+            for value in data["record_sound_indices"]:
+                try:
+                    index = int(value)
+                except (TypeError, ValueError):
+                    continue
+                if index not in indices:
+                    indices.append(index)
+                if len(indices) == 5:
                     break
+            Config.RECORD_SOUND_INDICES = indices
 
         Config.save()
         detector.reload_config()
@@ -294,12 +304,15 @@ def create_app(sound_detector):
 
     @app.route("/api/test-microphone")
     def api_test_microphone():
-        """Test microphone by recording 2 seconds of audio."""
+        """Test microphone by recording 2 seconds of audio via arecord."""
         device = request.args.get("device", Config.RPI_MICROPHONE_DEVICE)
         try:
-            import sounddevice as sd
+            import subprocess
+            import wave
             import numpy as np
             import time
+            import tempfile
+            import os
 
             SAMPLE_RATE = 44100
             DURATION = 2
@@ -311,11 +324,31 @@ def create_app(sound_detector):
                 time.sleep(1)
 
             print(f"[MIC] Testing device: {device}")
+            raw_device = device if device and device != "auto" else "hw:2,0"
+            alsa_device = raw_device.replace("hw:", "plughw:", 1) if raw_device.startswith("hw:") else raw_device
+
+            tmp = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+            tmp_path = tmp.name
+            tmp.close()
+
             try:
-                audio = sd.rec(int(SAMPLE_RATE * DURATION), samplerate=SAMPLE_RATE,
-                              channels=1, dtype=np.float32, device=device)
-                sd.wait()
+                cmd = [
+                    'arecord', '-D', alsa_device,
+                    '-f', 'S16_LE', '-r', str(SAMPLE_RATE),
+                    '-c', '1', '-d', str(DURATION),
+                    '-t', 'wav', '-q', tmp_path
+                ]
+                result = subprocess.run(cmd, capture_output=True, timeout=DURATION + 5)
+
+                if result.returncode != 0:
+                    raise RuntimeError(f"arecord failed: {result.stderr.decode().strip()}")
+
+                with wave.open(tmp_path, 'rb') as wf:
+                    frames = wf.readframes(wf.getnframes())
+                    audio = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
             finally:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
                 # Restart detector if it was running
                 if was_running:
                     detector.start()
@@ -754,17 +787,19 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 
   <div class="grid-2">
 
-    <!-- ── Sound Type ──────────────────────────────────── -->
+    <!-- ── Recording ───────────────────────────────────── -->
     <div class="card">
       <div class="card-header">
-        <h2>Sound Type</h2>
+        <h2>Recording</h2>
       </div>
-      <div class="field">
-        <label>What sound to detect</label>
-        <select id="sound_type" onchange="soundTypeChanged()"></select>
+      <div class="field full-width">
+        <label>Sounds To Record (up to 5)</label>
+        <input type="text" id="record_sound_search" placeholder="Search YAMNet sounds..." oninput="filterRecordSounds()">
+        <select id="record_sound_indices" multiple size="10" onchange="recordSoundsChanged()"></select>
+        <div style="font-size:0.75rem; color:var(--text-dim); margin-top:8px;" id="record-sound-summary">No recording sounds selected</div>
       </div>
       <p style="font-size:0.75rem; color:var(--text-dim); margin-top:10px;">
-        Powered by Google YAMNet — 521 sound classes, runs locally on device.
+        Barkomatic logs every non-speech YAMNet sound above threshold. Audio is only saved when one of the selected sounds is present.
       </p>
     </div>
 
@@ -812,7 +847,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           <span>Quieter sounds</span><span>Louder only</span>
         </div>
       </div>
-      <div class="field" id="dog-size-field" style="display:none;">
+      <div class="field" id="dog-size-field">
         <label>Large / Small Dog Threshold (Hz)</label>
         <div class="range-row">
           <input type="range" id="dog_size_frequency_threshold" min="500" max="4000" step="100"
@@ -1004,7 +1039,8 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 </style>
 
 <script>
-let soundCategories = [];
+let availableSounds = [];
+let selectedRecordSoundIndices = [];
 
 let currentAudio = null;
 let currentBtn = null;
@@ -1041,7 +1077,7 @@ async function fetchStatus() {
     document.getElementById('sound-type').textContent = d.sound_type || '—';
     document.getElementById('count').textContent = d.total_logged || 0;
     document.getElementById('uptime').textContent = d.uptime || '—';
-    document.getElementById('header-status').textContent = d.running ? 'Listening for ' + d.sound_type : 'Stopped';
+    document.getElementById('header-status').textContent = d.running ? 'Listening for all sounds' : 'Stopped';
     document.getElementById('header-status').style.color = d.running ? 'var(--green)' : 'var(--red)';
     const dot = document.getElementById('header-dot');
     dot.className = 'pulse-dot ' + (d.running ? 'running' : 'stopped');
@@ -1049,7 +1085,7 @@ async function fetchStatus() {
     if (d.last_detection) {
       const ld = d.last_detection;
       document.getElementById('last-detection').textContent =
-        ld.timestamp + ' (' + ld.decibels + 'dB)';
+        (ld.sound_type || 'Sound') + ' • ' + ld.timestamp + ' (' + ld.decibels + 'dB)';
     }
   } catch(e) {
     document.getElementById('header-status').textContent = 'Connection error';
@@ -1110,11 +1146,10 @@ async function loadSettings() {
     document.getElementById('energy_threshold').value = d.energy_threshold;
     document.getElementById('energy-val').textContent = d.energy_threshold + 'dB';
 
-    // Dog size slider (only relevant for dog bark)
+    // Dog size slider
     const dsVal = d.dog_size_frequency_threshold || 2000;
     document.getElementById('dog_size_frequency_threshold').value = dsVal;
     updateDogSizeLabel(dsVal);
-    toggleDogSizeField(d.sound_type_name);
 
     // Advanced fields
     document.getElementById('min_frequency').value = d.min_frequency;
@@ -1123,12 +1158,9 @@ async function loadSettings() {
     document.getElementById('local_timezone').value = d.local_timezone || '';
     document.getElementById('mic_device_adv').value = d.microphone_device;
 
-    // Sound type dropdown
-    soundCategories = d.sound_categories || [];
-    const sel = document.getElementById('sound_type');
-    sel.innerHTML = soundCategories.map(c =>
-      `<option value="${c.name}" ${c.name === d.sound_type_name ? 'selected' : ''}>${c.name}</option>`
-    ).join('');
+    availableSounds = d.available_sounds || [];
+    selectedRecordSoundIndices = (d.record_sound_indices || []).map(v => String(v));
+    renderRecordSoundOptions();
   } catch(e) { console.error(e); }
 }
 
@@ -1138,15 +1170,48 @@ function updateDogSizeLabel(hz) {
   document.getElementById('dog-size-hz2').textContent = hz;
 }
 
-function toggleDogSizeField(soundTypeName) {
-  const isDog = (soundTypeName || '').toLowerCase().includes('dog');
-  document.getElementById('dog-size-field').style.display = isDog ? '' : 'none';
+function renderRecordSoundOptions() {
+  const selected = new Set(selectedRecordSoundIndices);
+  const search = (document.getElementById('record_sound_search')?.value || '').trim().toLowerCase();
+  const sounds = availableSounds.filter(item => !search || item.name.toLowerCase().includes(search));
+  const sel = document.getElementById('record_sound_indices');
+  sel.innerHTML = sounds.map(item =>
+    `<option value="${item.index}" ${selected.has(String(item.index)) ? 'selected' : ''}>${item.name}</option>`
+  ).join('');
+  updateRecordSoundSummary();
 }
 
-function soundTypeChanged() {
-  const name = document.getElementById('sound_type').value;
-  document.getElementById('sound-type').textContent = name;
-  toggleDogSizeField(name);
+function filterRecordSounds() {
+  renderRecordSoundOptions();
+}
+
+function recordSoundsChanged() {
+  const sel = document.getElementById('record_sound_indices');
+  const visibleSelected = Array.from(sel.selectedOptions).map(opt => String(opt.value));
+  const visibleValues = new Set(Array.from(sel.options).map(opt => String(opt.value)));
+  const retained = selectedRecordSoundIndices.filter(value => !visibleValues.has(String(value)));
+  const merged = retained.concat(visibleSelected.filter(value => !retained.includes(value)));
+
+  if (merged.length > 5) {
+    const lastValue = merged[merged.length - 1];
+    const lastOption = Array.from(sel.options).find(opt => String(opt.value) === lastValue);
+    if (lastOption) lastOption.selected = false;
+    showToast('You can record up to 5 sounds', 'error');
+    return;
+  }
+  selectedRecordSoundIndices = merged;
+  updateRecordSoundSummary();
+}
+
+function updateRecordSoundSummary() {
+  const summary = document.getElementById('record-sound-summary');
+  const selected = selectedRecordSoundIndices
+    .map(value => availableSounds.find(item => String(item.index) === String(value)))
+    .filter(Boolean)
+    .map(item => item.name);
+  summary.textContent = selected.length
+    ? (selected.length + ' selected: ' + selected.join(', '))
+    : 'No recording sounds selected';
 }
 
 async function saveSettings() {
@@ -1157,8 +1222,8 @@ async function saveSettings() {
     max_frequency: parseFloat(document.getElementById('max_frequency').value),
     chunk_size: parseFloat(document.getElementById('chunk_size').value),
     local_timezone: document.getElementById('local_timezone').value.trim(),
-    sound_type_name: document.getElementById('sound_type').value,
     dog_size_frequency_threshold: parseInt(document.getElementById('dog_size_frequency_threshold').value),
+    record_sound_indices: selectedRecordSoundIndices.map(value => parseInt(value, 10)),
   };
   try {
     await fetch('/api/settings', {
@@ -1166,6 +1231,7 @@ async function saveSettings() {
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(data)
     });
+    setTimeout(fetchStatus, 500);
     showToast('Settings saved — detector reloaded', 'success');
   } catch(e) {
     showToast('Failed to save settings', 'error');
