@@ -190,6 +190,22 @@ def create_app(sound_detector):
             return jsonify({"error": "not found"}), 404
         return send_file(filepath, mimetype="audio/wav")
 
+    @app.route("/api/snapshot/<filename>")
+    def api_snapshot(filename):
+        """Serve a saved image captured alongside a recording."""
+        filepath = detector.get_snapshot_path(filename)
+        if not os.path.exists(filepath):
+            return jsonify({"error": "not found"}), 404
+        return send_file(filepath, mimetype="image/jpeg")
+
+    @app.route("/api/camera/live")
+    def api_camera_live():
+        """Capture and serve a live snapshot from the connected Pi camera."""
+        filepath = detector.capture_live_snapshot()
+        if not filepath or not os.path.exists(filepath):
+            return jsonify({"error": "camera unavailable"}), 503
+        return send_file(filepath, mimetype="image/jpeg")
+
     @app.route("/api/detect-microphone")
     def api_detect_microphone():
         """Detect available audio input devices."""
@@ -705,6 +721,8 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   }
   tr:hover td { background: rgba(56, 189, 248, 0.03); }
   .play-btn {
+    display: inline-flex;
+    align-items: center;
     min-width: 58px;
     padding: 6px 10px;
     border-radius: 999px;
@@ -714,6 +732,20 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     font-size: 0.72rem;
     font-weight: 700;
     justify-content: center;
+  }
+  .media-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 58px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(96, 165, 250, 0.28);
+    background: rgba(96, 165, 250, 0.08);
+    color: var(--blue);
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-decoration: none;
   }
   .play-btn.is-loading {
     color: var(--text);
@@ -750,6 +782,24 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     color: var(--text-dim);
   }
   .empty-state p { margin-top: 8px; font-size: 0.85rem; }
+  .camera-shell {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--bg-dark);
+    overflow: hidden;
+  }
+  .camera-frame {
+    display: block;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+    background: #040814;
+  }
+  .camera-meta {
+    margin-top: 10px;
+    font-size: 0.75rem;
+    color: var(--text-dim);
+  }
 
   /* ── Log Viewer ─────────────────────────────────────── */
   .log-controls {
@@ -915,6 +965,18 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     <!-- ── Microphone ────────────────────────────────────── -->
     <div class="card">
       <div class="card-header">
+        <h2>Camera Snapshot</h2>
+        <button class="btn-clear" onclick="refreshCameraSnapshot()" style="padding:6px 12px; font-size:0.75rem;">Refresh</button>
+      </div>
+      <div class="camera-shell">
+        <img id="camera-snapshot" class="camera-frame" alt="Live camera snapshot">
+      </div>
+      <div class="camera-meta" id="camera-status">Live snapshot refreshes every 8 seconds. Saved recordings also keep a matching snapshot.</div>
+      <div class="camera-meta" id="camera-last-saved">Last saved snapshot: --</div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
         <h2>Microphone</h2>
       </div>
       <div class="field" style="margin-bottom:14px;">
@@ -1019,6 +1081,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         <thead>
           <tr>
             <th>Play</th>
+            <th>Snapshot</th>
             <th>Timestamp</th>
             <th>Sound</th>
             <th>Decibels</th>
@@ -1144,6 +1207,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 <script>
 let availableSounds = [];
 let selectedRecordSoundIndices = [];
+let cameraRefreshTimer = null;
 
 let currentAudio = null;
 let currentBtn = null;
@@ -1610,6 +1674,36 @@ function downloadCsv() {
   window.location.href = '/api/download?' + new URLSearchParams(currentLogFilters()).toString();
 }
 
+function renderSnapshotCell(snapshotFile) {
+  if (!snapshotFile) {
+    return '<span style="color:var(--text-dim); font-size:0.7rem;">--</span>';
+  }
+  return `<a class="media-btn" href="/api/snapshot/${encodeURIComponent(snapshotFile)}" target="_blank" rel="noopener noreferrer">View</a>`;
+}
+
+function refreshCameraSnapshot() {
+  const image = document.getElementById('camera-snapshot');
+  const status = document.getElementById('camera-status');
+  status.textContent = 'Refreshing live camera snapshot...';
+  image.src = '/api/camera/live?ts=' + Date.now();
+}
+
+function initCameraSnapshot() {
+  const image = document.getElementById('camera-snapshot');
+  const status = document.getElementById('camera-status');
+  image.onload = () => {
+    status.textContent = 'Live snapshot refreshes every 8 seconds. Saved recordings also keep a matching snapshot.';
+  };
+  image.onerror = () => {
+    status.textContent = 'Camera snapshot unavailable. Check camera setup on the Pi.';
+  };
+  refreshCameraSnapshot();
+  if (cameraRefreshTimer) {
+    clearInterval(cameraRefreshTimer);
+  }
+  cameraRefreshTimer = setInterval(refreshCameraSnapshot, 8000);
+}
+
 async function fetchStatus() {
   try {
     const r = await fetch('/api/status');
@@ -1649,7 +1743,7 @@ async function fetchStatus() {
 }
 
 async function freeDiskSpace() {
-  if (!confirm('Delete recordings and log entries older than 30 days to free disk space?')) return;
+  if (!confirm('Delete recordings, saved snapshots, and log entries older than 30 days to free disk space?')) return;
 
   try {
     const res = await fetch('/api/free-disk-space', {
@@ -1665,7 +1759,7 @@ async function freeDiskSpace() {
     await fetchStatus();
     await fetchDetections();
     showToast(
-      'Deleted ' + data.deleted_files + ' recording(s) and ' + data.deleted_logs + ' log(s), freed ' + data.freed_mb + ' MB',
+      'Deleted ' + data.deleted_files + ' old media file(s) and ' + data.deleted_logs + ' log(s), freed ' + data.freed_mb + ' MB',
       'success'
     );
   } catch (e) {
@@ -1703,6 +1797,11 @@ async function fetchStatus() {
     document.getElementById('disk-free-pct').style.color = d.recording_blocked_low_disk ? 'var(--red)' : '';
     document.getElementById('recording-disk-warning').style.display =
       d.recording_blocked_low_disk ? 'block' : 'none';
+    document.getElementById('camera-last-saved').textContent =
+      'Last saved snapshot: ' + (d.last_snapshot_file || '--');
+    if (d.camera_available === false) {
+      document.getElementById('camera-status').textContent = 'Camera snapshot unavailable. Check camera setup on the Pi.';
+    }
 
     if (d.last_detection) {
       const ld = d.last_detection;
@@ -1783,8 +1882,10 @@ async function fetchDetections() {
       const playBtn = r.audio_file
         ? `<button class="play-btn" onclick="playAudio('${r.audio_file}', this)" title="Play recording">Play</button>`
         : '<span style="color:var(--text-dim); font-size:0.7rem;">--</span>';
+      const snapshotBtn = renderSnapshotCell(r.snapshot_file);
       return `<tr>
         <td>${playBtn}</td>
+        <td>${snapshotBtn}</td>
         <td style="white-space:nowrap;">${r.timestamp || ''}</td>
         <td>${r.sound_type || ''}</td>
         <td>${r.decibels || ''}dB</td>
@@ -1803,6 +1904,7 @@ loadSettings();
 fetchStatus();
 fetchDetections();
 detectMics(true);
+initCameraSnapshot();
 setInterval(fetchStatus, 3000);
 setInterval(fetchDetections, 5000);
 </script>

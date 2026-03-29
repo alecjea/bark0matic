@@ -2,6 +2,17 @@
 
 All notable changes to Barkomatic are documented here.
 
+## [1.0.24] - 2026-03-30
+
+### Added
+- Live camera snapshot card on the dashboard backed by the Raspberry Pi camera
+- Saved JPEG snapshots linked from the detection log for recorded clips
+
+### Changed
+- When a selected sound saves an audio recording, Barkomatic now captures and stores a matching camera snapshot
+- Snapshot filenames are now stored alongside audio filenames in SQLite
+- Free disk space cleanup now removes old snapshots as well as old recordings and log rows
+
 ## [1.0.23] - 2026-03-29
 
 ### Added

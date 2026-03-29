@@ -23,6 +23,7 @@ class FileLogger:
         "duration_seconds",
         "dog_size",
         "audio_file",
+        "snapshot_file",
         "json_payload",
     ]
 
@@ -59,6 +60,7 @@ class FileLogger:
                     duration_seconds REAL NOT NULL,
                     dog_size TEXT NOT NULL DEFAULT '',
                     audio_file TEXT NOT NULL DEFAULT '',
+                    snapshot_file TEXT NOT NULL DEFAULT '',
                     json_payload TEXT NOT NULL DEFAULT ''
                 )
                 """
@@ -70,6 +72,10 @@ class FileLogger:
             if "class_index" not in columns:
                 conn.execute(
                     "ALTER TABLE detections ADD COLUMN class_index INTEGER NOT NULL DEFAULT -1"
+                )
+            if "snapshot_file" not in columns:
+                conn.execute(
+                    "ALTER TABLE detections ADD COLUMN snapshot_file TEXT NOT NULL DEFAULT ''"
                 )
             conn.commit()
 
@@ -116,6 +122,7 @@ class FileLogger:
         confidence,
         features,
         audio_file="",
+        snapshot_file="",
         yamnet_scores=None,
     ):
         """Log a detected sound event."""
@@ -143,6 +150,7 @@ class FileLogger:
             "duration_seconds": round(duration, 2),
             "dog_size": dog_size,
             "audio_file": audio_file,
+            "snapshot_file": snapshot_file,
             "features": {k: v for k, v in (features or {}).items() if k != "mfcc_mean"},
             "threshold_used": Config.BARK_DETECTION_THRESHOLD,
             "energy_threshold_used": Config.BARK_DETECTION_ENERGY_THRESHOLD,
@@ -162,8 +170,8 @@ class FileLogger:
                         """
                         INSERT INTO detections (
                             timestamp, class_index, sound_type, decibels, rms_energy, frequency_hz,
-                            confidence, duration_seconds, dog_size, audio_file, json_payload
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            confidence, duration_seconds, dog_size, audio_file, snapshot_file, json_payload
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             timestamp,
@@ -176,6 +184,7 @@ class FileLogger:
                             round(duration, 1),
                             dog_size,
                             audio_file,
+                            snapshot_file,
                             payload_json,
                         ),
                     )
@@ -199,7 +208,7 @@ class FileLogger:
                     f"""
                     SELECT
                         timestamp, class_index, sound_type, decibels, rms_energy, frequency_hz,
-                        confidence, duration_seconds, dog_size, audio_file, json_payload
+                        confidence, duration_seconds, dog_size, audio_file, snapshot_file, json_payload
                     FROM detections
                     {where_sql}
                     ORDER BY id DESC
@@ -221,7 +230,7 @@ class FileLogger:
                     f"""
                     SELECT
                         timestamp, class_index, sound_type, decibels, rms_energy, frequency_hz,
-                        confidence, duration_seconds, dog_size, audio_file, json_payload
+                        confidence, duration_seconds, dog_size, audio_file, snapshot_file, json_payload
                     FROM detections
                     {where_sql}
                     ORDER BY id DESC

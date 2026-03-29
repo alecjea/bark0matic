@@ -1,6 +1,7 @@
 """Sound detection daemon for Barkomatic."""
 import os
 import shutil
+import subprocess
 import threading
 import time
 from datetime import datetime, timedelta
@@ -11,6 +12,8 @@ from file_logger import FileLogger
 
 # Directory to store detection audio clips
 AUDIO_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "recordings")
+SNAPSHOT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "snapshots")
+LIVE_SNAPSHOT_FILE = "live.jpg"
 
 
 class SoundDetector:
@@ -28,11 +31,15 @@ class SoundDetector:
         self.last_detection = None
         self.last_audio_db = None
         self.audio_present = False
+        self.last_snapshot_file = ""
+        self.camera_available = None
         self._thread = None
         self._stop_event = threading.Event()
+        self._snapshot_lock = threading.Lock()
 
         # Ensure recordings directory exists
         os.makedirs(AUDIO_DIR, exist_ok=True)
+        os.makedirs(SNAPSHOT_DIR, exist_ok=True)
 
     def _get_disk_stats(self):
         """Return current disk usage stats for the recordings volume."""
@@ -49,6 +56,80 @@ class SoundDetector:
             "disk_used_pct": used_pct,
             "recording_blocked_low_disk": recording_blocked,
         }
+
+    def _capture_snapshot(self, output_path, timeout_ms=1000):
+        """Capture a still image from the Pi camera."""
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        temp_path = output_path + ".tmp"
+
+        cmd = [
+            "rpicam-still",
+            "-o",
+            temp_path,
+            "--nopreview",
+            "--timeout",
+            str(int(timeout_ms)),
+            "--width",
+            "1280",
+            "--height",
+            "720",
+            "--quality",
+            "90",
+        ]
+
+        try:
+            with self._snapshot_lock:
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=max(6, int(timeout_ms / 1000) + 5),
+                )
+
+                if result.returncode != 0:
+                    self.camera_available = False
+                    if os.path.exists(temp_path):
+                        os.unlink(temp_path)
+                    stderr = (result.stderr or "").strip()
+                    print(f"[CAMERA] Snapshot failed: {stderr or 'unknown error'}")
+                    return False
+
+                os.replace(temp_path, output_path)
+
+            self.camera_available = True
+            return True
+        except FileNotFoundError:
+            self.camera_available = False
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+            print("[CAMERA] rpicam-still not found")
+            return False
+        except Exception as exc:
+            self.camera_available = False
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+            print(f"[CAMERA] Snapshot failed: {exc}")
+            return False
+
+    def capture_live_snapshot(self):
+        """Capture and return the latest live snapshot path."""
+        live_path = os.path.join(SNAPSHOT_DIR, LIVE_SNAPSHOT_FILE)
+        if self._capture_snapshot(live_path, timeout_ms=700):
+            return live_path
+        return live_path if os.path.exists(live_path) else None
+
+    def capture_recording_snapshot(self, stem):
+        """Capture a snapshot tied to a saved audio recording."""
+        snapshot_filename = f"{stem}.jpg"
+        snapshot_path = os.path.join(SNAPSHOT_DIR, snapshot_filename)
+        if self._capture_snapshot(snapshot_path, timeout_ms=700):
+            self.last_snapshot_file = snapshot_filename
+            return snapshot_filename
+        return ""
+
+    def get_snapshot_path(self, filename):
+        """Return the absolute path for a saved snapshot filename."""
+        return os.path.join(SNAPSHOT_DIR, filename)
 
     def start(self):
         """Start detection in a background thread."""
@@ -81,6 +162,8 @@ class SoundDetector:
             "sound_type": "All sounds",
             "record_sound_indices": Config.RECORD_SOUND_INDICES,
             "threshold": Config.BARK_DETECTION_THRESHOLD,
+            "last_snapshot_file": self.last_snapshot_file,
+            "camera_available": self.camera_available,
             **disk_stats,
         }
 
@@ -90,19 +173,20 @@ class SoundDetector:
         deleted_files = 0
         freed_bytes = 0
 
-        for entry in os.scandir(AUDIO_DIR):
-            if not entry.is_file():
-                continue
-            try:
-                modified = datetime.fromtimestamp(entry.stat().st_mtime)
-                if modified >= cutoff:
+        for media_dir in (AUDIO_DIR, SNAPSHOT_DIR):
+            for entry in os.scandir(media_dir):
+                if not entry.is_file():
                     continue
-                size = entry.stat().st_size
-                os.unlink(entry.path)
-                deleted_files += 1
-                freed_bytes += size
-            except FileNotFoundError:
-                continue
+                try:
+                    modified = datetime.fromtimestamp(entry.stat().st_mtime)
+                    if modified >= cutoff:
+                        continue
+                    size = entry.stat().st_size
+                    os.unlink(entry.path)
+                    deleted_files += 1
+                    freed_bytes += size
+                except FileNotFoundError:
+                    continue
 
         log_result = self.logger.cleanup_old_events(days=days)
 
@@ -159,13 +243,18 @@ class SoundDetector:
                     )
 
                     audio_filename = ""
+                    snapshot_filename = ""
                     if should_record and wav_path and os.path.exists(wav_path):
                         now = datetime.now(Config.get_timezone())
-                        audio_filename = now.strftime("%Y%m%d_%H%M%S") + ".wav"
+                        stem = now.strftime("%Y%m%d_%H%M%S")
+                        audio_filename = stem + ".wav"
                         dest = os.path.join(AUDIO_DIR, audio_filename)
                         shutil.move(wav_path, dest)
                         wav_path = None  # Don't delete below
                         print(f"[AUDIO] Saved clip: {audio_filename}")
+                        snapshot_filename = self.capture_recording_snapshot(stem)
+                        if snapshot_filename:
+                            print(f"[CAMERA] Saved snapshot: {snapshot_filename}")
 
                     for match in matches:
                         self.logger.log_event(
@@ -176,6 +265,7 @@ class SoundDetector:
                             confidence=match["confidence"],
                             features=features,
                             audio_file=audio_filename,
+                            snapshot_file=snapshot_filename,
                             yamnet_scores=yamnet_scores,
                         )
 
