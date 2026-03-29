@@ -12,6 +12,7 @@ All notable changes to Barkomatic are documented here.
 - When a selected sound saves an audio recording, Barkomatic now captures and stores a matching camera snapshot
 - Snapshot filenames are now stored alongside audio filenames in SQLite
 - Free disk space cleanup now removes old snapshots as well as old recordings and log rows
+- Recording selection limit increased from 5 sounds to 10 sounds
 
 ## [1.0.23] - 2026-03-29
 

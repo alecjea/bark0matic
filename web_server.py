@@ -112,7 +112,7 @@ def create_app(sound_detector):
                     continue
                 if index not in indices:
                     indices.append(index)
-                if len(indices) == 5:
+                if len(indices) == 10:
                     break
             Config.RECORD_SOUND_INDICES = indices
 
@@ -947,7 +947,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         <h2>Recording</h2>
       </div>
       <div class="field full-width">
-        <label>Sounds To Record (up to 5)</label>
+        <label>Sounds To Record (up to 10)</label>
         <input type="text" id="record_sound_search" placeholder="Search YAMNet sounds..." oninput="filterRecordSounds()">
         <select id="record_sound_indices" multiple size="10" onchange="recordSoundsChanged()"></select>
         <div class="field-hint">Select multiple sounds with Ctrl + click (or Cmd + click on Mac), then press Save All Settings.<br>Click a selected tag to remove it.</div>
@@ -1394,11 +1394,11 @@ function recordSoundsChanged() {
   const retained = selectedRecordSoundIndices.filter(value => !visibleValues.has(String(value)));
   const merged = retained.concat(visibleSelected.filter(value => !retained.includes(value)));
 
-  if (merged.length > 5) {
+  if (merged.length > 10) {
     const lastValue = merged[merged.length - 1];
     const lastOption = Array.from(sel.options).find(opt => String(opt.value) === lastValue);
     if (lastOption) lastOption.selected = false;
-    showToast('You can record up to 5 sounds', 'error');
+    showToast('You can record up to 10 sounds', 'error');
     return;
   }
   selectedRecordSoundIndices = merged;

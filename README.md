@@ -19,7 +19,7 @@ Detects sounds (dog barks, music, sirens, and more) through a USB microphone usi
 - **Snapshot Capture** — When a selected sound saves an audio clip, Barkomatic also saves a matching camera JPEG snapshot
 - **USB Mic Auto-Detection** — Detect, test, and save microphone via dashboard
 - **SQLite Logging** — Timestamped detections for all non-speech sounds stored in `detections.db` with confidence, dB, frequency, and dog size
-- **Selective Recording** — Audio clips are only saved for up to 5 chosen sounds while all non-speech detections are still logged
+- **Selective Recording** — Audio clips are only saved for up to 10 chosen sounds while all non-speech detections are still logged
 - **Timezone Support** — Configurable local timezone for accurate timestamps
 - **Systemd Service** — Auto-starts on boot, auto-restarts on crash
 - **Adjustable Sensitivity** — Confidence threshold (0.01–1.0), energy threshold, frequency range
@@ -96,7 +96,7 @@ Access at `http://<rpi-ip>:8080`
 
 - **Status** — Running/stopped indicator with pulsing dot, detection count, uptime
 - **Software Update** — Pull the latest version from GitHub and restart Barkomatic from the dashboard
-- **Recording Selection** — Search the full YAMNet sound list and choose up to 5 sounds that should save audio clips
+- **Recording Selection** — Search the full YAMNet sound list and choose up to 10 sounds that should save audio clips
 - **Camera Snapshot** — Live snapshot preview from the connected Pi camera, plus saved snapshots for recorded detections
 - **Sound Type** — Switch between 19 categories
 - **Microphone** — Detect, test, and save USB input device
