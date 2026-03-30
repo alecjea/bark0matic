@@ -4,6 +4,7 @@ import subprocess
 from datetime import datetime, timedelta
 from flask import Flask, jsonify, request, send_file, render_template_string
 from config import Config
+from incident_model import IncidentManager
 
 # Will be set by main.py
 detector = None
@@ -50,6 +51,7 @@ def create_app(sound_detector):
     detector = sound_detector
 
     app = Flask(__name__)
+    incident_mgr = IncidentManager(Config.LOG_DB_PATH)
 
     @app.route("/")
     def dashboard():
@@ -154,6 +156,40 @@ def create_app(sound_detector):
         audio_only = request.args.get("audio_only", "0") in ("1", "true", "yes", "on")
         csv_path = detector.logger.get_csv_path(search=search, audio_only=audio_only)
         return send_file(csv_path, as_attachment=True, download_name="detections.csv")
+
+    @app.route("/api/incidents")
+    def api_incidents():
+        """Return grouped incidents (processes any pending detections first)."""
+        incident_mgr.process_new_detections()
+        count = request.args.get("count", 50, type=int)
+        event_type = request.args.get("event_type", None, type=str)
+        review_status = request.args.get("review_status", None, type=str)
+        rows = incident_mgr.get_recent_incidents(
+            count=count,
+            event_type=event_type,
+            review_status=review_status,
+        )
+        return jsonify(rows)
+
+    @app.route("/api/incidents/<incident_id>", methods=["GET"])
+    def api_get_incident(incident_id):
+        incident = incident_mgr.get_incident(incident_id)
+        if incident is None:
+            return jsonify({"error": "not found"}), 404
+        return jsonify(incident)
+
+    @app.route("/api/incidents/<incident_id>", methods=["PATCH"])
+    def api_update_incident(incident_id):
+        data = request.json or {}
+        ok = incident_mgr.update_incident(
+            incident_id,
+            review_status=data.get("review_status"),
+            tenant_marked=data.get("tenant_marked"),
+            case_id=data.get("case_id"),
+        )
+        if not ok:
+            return jsonify({"error": "update failed or invalid fields"}), 400
+        return jsonify({"status": "ok"})
 
     @app.route("/api/update", methods=["POST"])
     def api_update():
@@ -1059,6 +1095,59 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     </div>
   </div>
 
+  <!-- ── Incidents ─────────────────────────────────────── -->
+  <div class="card">
+    <div class="card-header">
+      <h2>Incidents</h2>
+      <div class="log-controls">
+        <select id="incident-event-type" onchange="fetchIncidents()" style="background:var(--bg-dark); border:1px solid var(--border); color:var(--text); padding:4px 8px; border-radius:6px; font-size:0.75rem;">
+          <option value="">All types</option>
+          <option value="dog_barking">Dog barking</option>
+          <option value="amplified_music">Amplified music</option>
+          <option value="shouting">Shouting</option>
+          <option value="impact_banging">Impact / banging</option>
+          <option value="sustained_loud_noise">Sustained loud noise</option>
+          <option value="unknown_nuisance_noise">Unknown nuisance</option>
+        </select>
+        <select id="incident-review-status" onchange="fetchIncidents()" style="background:var(--bg-dark); border:1px solid var(--border); color:var(--text); padding:4px 8px; border-radius:6px; font-size:0.75rem;">
+          <option value="">All statuses</option>
+          <option value="pending">Pending</option>
+          <option value="reviewed">Reviewed</option>
+          <option value="dismissed">Dismissed</option>
+        </select>
+        <select id="incident-limit" onchange="fetchIncidents()" style="background:var(--bg-dark); border:1px solid var(--border); color:var(--text); padding:4px 8px; border-radius:6px; font-size:0.75rem;">
+          <option value="25">Last 25</option>
+          <option value="50" selected>Last 50</option>
+          <option value="100">Last 100</option>
+        </select>
+        <span class="log-count" id="incident-count"></span>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Started</th>
+            <th>Type</th>
+            <th>Duration</th>
+            <th>Peak dB</th>
+            <th>Avg dB</th>
+            <th>Confidence</th>
+            <th>Severity</th>
+            <th>Detections</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="incidents"></tbody>
+      </table>
+      <div class="empty-state" id="incidents-empty-state">
+        <div style="font-size:2rem; margin-bottom:8px;">&#128203;</div>
+        <p>No incidents yet. Detections will be grouped into incidents automatically.</p>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Detections Log ────────────────────────────────── -->
   <div class="card">
     <div class="card-header">
@@ -1900,13 +1989,88 @@ async function fetchDetections() {
   } catch (e) { console.error(e); }
 }
 
+async function fetchIncidents() {
+  try {
+    const eventType = document.getElementById('incident-event-type').value;
+    const reviewStatus = document.getElementById('incident-review-status').value;
+    const limit = document.getElementById('incident-limit').value;
+    const params = new URLSearchParams({ count: limit });
+    if (eventType) params.set('event_type', eventType);
+    if (reviewStatus) params.set('review_status', reviewStatus);
+
+    const r = await fetch('/api/incidents?' + params.toString());
+    const rows = await r.json();
+    const tbody = document.getElementById('incidents');
+    const empty = document.getElementById('incidents-empty-state');
+
+    if (!rows.length) {
+      tbody.innerHTML = '';
+      empty.style.display = 'block';
+      document.getElementById('incident-count').textContent = '';
+      return;
+    }
+    empty.style.display = 'none';
+    document.getElementById('incident-count').textContent = rows.length + ' incidents';
+
+    const severityColor = s => {
+      if (s >= 0.7) return 'var(--red)';
+      if (s >= 0.4) return 'var(--orange)';
+      return 'var(--green)';
+    };
+    const statusBadge = st => {
+      const colors = { pending: 'var(--orange)', reviewed: 'var(--green)', dismissed: 'var(--text-dim)' };
+      return `<span style="color:${colors[st] || 'var(--text)'}; font-size:0.75rem;">${st}</span>`;
+    };
+
+    tbody.innerHTML = rows.map(inc => {
+      const sev = parseFloat(inc.severity_score) || 0;
+      const sevPct = Math.min(sev * 100, 100);
+      const playBtn = inc.media_ref
+        ? `<button class="play-btn" onclick="playAudio('${inc.media_ref}', this)" title="Play clip">Play</button>`
+        : '';
+      return `<tr>
+        <td style="white-space:nowrap; font-size:0.8rem;">${inc.started_at || ''}</td>
+        <td style="font-size:0.8rem;">${(inc.event_type || '').replace(/_/g,' ')}</td>
+        <td style="font-size:0.8rem;">${inc.duration_seconds}s</td>
+        <td style="font-size:0.8rem;">${inc.peak_db}dB</td>
+        <td style="font-size:0.8rem;">${inc.average_db}dB</td>
+        <td style="font-size:0.8rem;">${inc.confidence}</td>
+        <td>
+          <span class="confidence-bar"><span class="confidence-fill" style="width:${sevPct}%; background:${severityColor(sev)};"></span></span>
+          <span style="font-size:0.75rem; color:${severityColor(sev)};">${sev}</span>
+        </td>
+        <td style="font-size:0.8rem; text-align:center;">${inc.detection_count}</td>
+        <td>${statusBadge(inc.review_status)}</td>
+        <td style="white-space:nowrap;">
+          ${playBtn}
+          <button onclick="reviewIncident('${inc.incident_id}','reviewed')" style="font-size:0.7rem; padding:2px 6px; background:var(--green-bg); color:var(--green); border:1px solid var(--green); border-radius:4px; cursor:pointer; margin:1px;">&#10003;</button>
+          <button onclick="reviewIncident('${inc.incident_id}','dismissed')" style="font-size:0.7rem; padding:2px 6px; background:var(--red-bg); color:var(--red); border:1px solid var(--red); border-radius:4px; cursor:pointer; margin:1px;">&times;</button>
+        </td>
+      </tr>`;
+    }).join('');
+  } catch(e) { console.error(e); }
+}
+
+async function reviewIncident(incidentId, status) {
+  try {
+    await fetch('/api/incidents/' + incidentId, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ review_status: status }),
+    });
+    fetchIncidents();
+  } catch(e) { console.error(e); }
+}
+
 loadSettings();
 fetchStatus();
+fetchIncidents();
 fetchDetections();
 detectMics(true);
 initCameraSnapshot();
 setInterval(fetchStatus, 3000);
 setInterval(fetchDetections, 5000);
+setInterval(fetchIncidents, 15000);
 </script>
 </body>
 </html>"""
