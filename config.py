@@ -33,6 +33,11 @@ class Config:
     # Dog size classification
     DOG_SIZE_FREQUENCY_THRESHOLD = 2000  # Hz — below = large dog, above = small dog
 
+    # Quiet hours (NSW defaults: 10pm–8am weekdays, 10pm–9am weekends)
+    QUIET_HOURS_ENABLED = True
+    QUIET_HOURS_WEEKDAY = {"start": "22:00", "end": "08:00"}
+    QUIET_HOURS_WEEKEND = {"start": "22:00", "end": "09:00"}
+
     # Logging
     LOG_DB_PATH = str(Path(__file__).parent / "detections.db")
     BACKUP_LOG_FILE = "/tmp/barkomatic_backup.json"
@@ -79,6 +84,9 @@ class Config:
             "bark_detection_min_duration": cls.BARK_DETECTION_MIN_DURATION,
             "bark_detection_energy_threshold": cls.BARK_DETECTION_ENERGY_THRESHOLD,
             "dog_size_frequency_threshold": cls.DOG_SIZE_FREQUENCY_THRESHOLD,
+            "quiet_hours_enabled": cls.QUIET_HOURS_ENABLED,
+            "quiet_hours_weekday": cls.QUIET_HOURS_WEEKDAY,
+            "quiet_hours_weekend": cls.QUIET_HOURS_WEEKEND,
             "log_db_path": cls.LOG_DB_PATH,
             "web_port": cls.WEB_PORT,
         }
@@ -112,6 +120,9 @@ class Config:
             "energy_threshold": cls.BARK_DETECTION_ENERGY_THRESHOLD,
             "chunk_size": cls.BARK_DETECTION_CHUNK_SIZE,
             "dog_size_frequency_threshold": cls.DOG_SIZE_FREQUENCY_THRESHOLD,
+            "quiet_hours_enabled": cls.QUIET_HOURS_ENABLED,
+            "quiet_hours_weekday": cls.QUIET_HOURS_WEEKDAY,
+            "quiet_hours_weekend": cls.QUIET_HOURS_WEEKEND,
             "web_port": cls.WEB_PORT,
         }
 

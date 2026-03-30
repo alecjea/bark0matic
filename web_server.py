@@ -103,6 +103,16 @@ def create_app(sound_detector):
             Config.BARK_DETECTION_CHUNK_SIZE = float(data["chunk_size"])
         if "dog_size_frequency_threshold" in data:
             Config.DOG_SIZE_FREQUENCY_THRESHOLD = int(data["dog_size_frequency_threshold"])
+        if "quiet_hours_enabled" in data:
+            Config.QUIET_HOURS_ENABLED = bool(data["quiet_hours_enabled"])
+        if "quiet_hours_weekday" in data:
+            qw = data["quiet_hours_weekday"]
+            if isinstance(qw, dict) and "start" in qw and "end" in qw:
+                Config.QUIET_HOURS_WEEKDAY = {"start": str(qw["start"]), "end": str(qw["end"])}
+        if "quiet_hours_weekend" in data:
+            qe = data["quiet_hours_weekend"]
+            if isinstance(qe, dict) and "start" in qe and "end" in qe:
+                Config.QUIET_HOURS_WEEKEND = {"start": str(qe["start"]), "end": str(qe["end"])}
         Config.SOUND_TYPE_NAME = "All sounds"
         Config.SOUND_TYPE_INDICES = []
         if "record_sound_indices" in data:
@@ -1086,6 +1096,34 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           <input type="text" id="mic_device_adv" disabled style="opacity:0.5;">
         </div>
       </div>
+      <div class="field-subsection">
+        <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+          <label style="font-size:0.85rem; font-weight:600; color:var(--text);">Quiet Hours</label>
+          <label style="display:flex; align-items:center; gap:6px; font-size:0.8rem; color:var(--text-dim); cursor:pointer;">
+            <input type="checkbox" id="quiet_hours_enabled" style="accent-color:var(--accent); width:14px; height:14px;">
+            Enable quiet hours enforcement
+          </label>
+        </div>
+        <div class="settings-grid">
+          <div class="field">
+            <label>Weekday quiet start (HH:MM)</label>
+            <input type="text" id="qh_weekday_start" placeholder="22:00" pattern="\d{2}:\d{2}">
+          </div>
+          <div class="field">
+            <label>Weekday quiet end (HH:MM)</label>
+            <input type="text" id="qh_weekday_end" placeholder="08:00" pattern="\d{2}:\d{2}">
+          </div>
+          <div class="field">
+            <label>Weekend quiet start (HH:MM)</label>
+            <input type="text" id="qh_weekend_start" placeholder="22:00" pattern="\d{2}:\d{2}">
+          </div>
+          <div class="field">
+            <label>Weekend quiet end (HH:MM)</label>
+            <input type="text" id="qh_weekend_end" placeholder="09:00" pattern="\d{2}:\d{2}">
+          </div>
+        </div>
+        <div style="font-size:0.75rem; color:var(--text-dim); margin-top:4px;">NSW defaults: 10pm–8am weekdays, 10pm–9am weekends. Incidents within these windows are flagged as quiet hours violations.</div>
+      </div>
     </div>
     <div style="margin-top:14px; display:flex; gap:10px;">
       <button class="btn-save" onclick="saveSettings()">Save All Settings</button>
@@ -1120,6 +1158,10 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           <option value="50" selected>Last 50</option>
           <option value="100">Last 100</option>
         </select>
+        <label class="log-check">
+          <input type="checkbox" id="incident-qh-only" onchange="fetchIncidents()" style="accent-color:var(--accent);">
+          <span style="color:var(--orange); font-weight:600;">&#9679;</span> QH violations only
+        </label>
         <span class="log-count" id="incident-count"></span>
       </div>
     </div>
@@ -1135,6 +1177,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             <th>Confidence</th>
             <th>Severity</th>
             <th>Detections</th>
+            <th title="Quiet Hours Violation">QH</th>
             <th>Status</th>
             <th>Actions</th>
           </tr>
@@ -1455,6 +1498,15 @@ async function loadSettings() {
     document.getElementById('local_timezone').value = d.local_timezone || '';
     document.getElementById('mic_device_adv').value = d.microphone_device;
 
+    // Quiet hours
+    document.getElementById('quiet_hours_enabled').checked = !!d.quiet_hours_enabled;
+    const qhwd = d.quiet_hours_weekday || {};
+    const qhwe = d.quiet_hours_weekend || {};
+    document.getElementById('qh_weekday_start').value = qhwd.start || '22:00';
+    document.getElementById('qh_weekday_end').value = qhwd.end || '08:00';
+    document.getElementById('qh_weekend_start').value = qhwe.start || '22:00';
+    document.getElementById('qh_weekend_end').value = qhwe.end || '09:00';
+
     availableSounds = d.available_sounds || [];
     selectedRecordSoundIndices = (d.record_sound_indices || []).map(v => String(v));
     renderRecordSoundOptions();
@@ -1526,6 +1578,15 @@ async function saveSettings() {
     chunk_size: parseFloat(document.getElementById('chunk_size').value),
     local_timezone: document.getElementById('local_timezone').value.trim(),
     record_sound_indices: selectedRecordSoundIndices.map(value => parseInt(value, 10)),
+    quiet_hours_enabled: document.getElementById('quiet_hours_enabled').checked,
+    quiet_hours_weekday: {
+      start: document.getElementById('qh_weekday_start').value.trim() || '22:00',
+      end: document.getElementById('qh_weekday_end').value.trim() || '08:00',
+    },
+    quiet_hours_weekend: {
+      start: document.getElementById('qh_weekend_start').value.trim() || '22:00',
+      end: document.getElementById('qh_weekend_end').value.trim() || '09:00',
+    },
   };
   try {
     await fetch('/api/settings', {
@@ -1994,12 +2055,14 @@ async function fetchIncidents() {
     const eventType = document.getElementById('incident-event-type').value;
     const reviewStatus = document.getElementById('incident-review-status').value;
     const limit = document.getElementById('incident-limit').value;
+    const qhOnly = document.getElementById('incident-qh-only').checked;
     const params = new URLSearchParams({ count: limit });
     if (eventType) params.set('event_type', eventType);
     if (reviewStatus) params.set('review_status', reviewStatus);
 
     const r = await fetch('/api/incidents?' + params.toString());
-    const rows = await r.json();
+    let rows = await r.json();
+    if (qhOnly) rows = rows.filter(inc => inc.quiet_hours_violation);
     const tbody = document.getElementById('incidents');
     const empty = document.getElementById('incidents-empty-state');
 
@@ -2010,7 +2073,8 @@ async function fetchIncidents() {
       return;
     }
     empty.style.display = 'none';
-    document.getElementById('incident-count').textContent = rows.length + ' incidents';
+    const qhCount = rows.filter(inc => inc.quiet_hours_violation).length;
+    document.getElementById('incident-count').textContent = rows.length + ' incidents' + (qhCount ? ` · ${qhCount} QH` : '');
 
     const severityColor = s => {
       if (s >= 0.7) return 'var(--red)';
@@ -2021,14 +2085,18 @@ async function fetchIncidents() {
       const colors = { pending: 'var(--orange)', reviewed: 'var(--green)', dismissed: 'var(--text-dim)' };
       return `<span style="color:${colors[st] || 'var(--text)'}; font-size:0.75rem;">${st}</span>`;
     };
+    const qhBadge = v => v
+      ? `<span title="Quiet Hours Violation" style="color:var(--orange); font-weight:700; font-size:0.85rem;">&#9679;</span>`
+      : `<span style="color:var(--border);">&#8212;</span>`;
 
     tbody.innerHTML = rows.map(inc => {
       const sev = parseFloat(inc.severity_score) || 0;
       const sevPct = Math.min(sev * 100, 100);
+      const rowBg = inc.quiet_hours_violation ? 'background:rgba(251,146,60,0.04);' : '';
       const playBtn = inc.media_ref
         ? `<button class="play-btn" onclick="playAudio('${inc.media_ref}', this)" title="Play clip">Play</button>`
         : '';
-      return `<tr>
+      return `<tr style="${rowBg}">
         <td style="white-space:nowrap; font-size:0.8rem;">${inc.started_at || ''}</td>
         <td style="font-size:0.8rem;">${(inc.event_type || '').replace(/_/g,' ')}</td>
         <td style="font-size:0.8rem;">${inc.duration_seconds}s</td>
@@ -2040,6 +2108,7 @@ async function fetchIncidents() {
           <span style="font-size:0.75rem; color:${severityColor(sev)};">${sev}</span>
         </td>
         <td style="font-size:0.8rem; text-align:center;">${inc.detection_count}</td>
+        <td style="text-align:center;">${qhBadge(inc.quiet_hours_violation)}</td>
         <td>${statusBadge(inc.review_status)}</td>
         <td style="white-space:nowrap;">
           ${playBtn}

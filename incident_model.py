@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime
 
 from config import Config
+from quiet_hours import is_quiet_hours
 
 # Merge window: detections of the same event_type within this many seconds are one incident.
 GROUPING_WINDOW_SECONDS = 30
@@ -199,7 +200,7 @@ class IncidentManager:
                         round(average_db, 1),
                         round(avg_confidence, 3),
                         severity,
-                        0,           # quiet_hours_violation — enforced by SEN-3
+                        1 if is_quiet_hours(started_at, Config) else 0,
                         "pending",
                         "standard",
                         media_ref,
