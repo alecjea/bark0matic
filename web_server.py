@@ -1,10 +1,12 @@
 """Flask web interface for bark0matic."""
+import io
 import os
 import subprocess
 from datetime import datetime, timedelta
 from flask import Flask, jsonify, request, send_file, render_template_string
 from config import Config
 from incident_model import IncidentManager
+import report_exporter
 
 # Will be set by main.py
 detector = None
@@ -200,6 +202,61 @@ def create_app(sound_detector):
         if not ok:
             return jsonify({"error": "update failed or invalid fields"}), 400
         return jsonify({"status": "ok"})
+
+    @app.route("/api/export/incidents.csv")
+    def api_export_incidents_csv():
+        """Export incidents as a CSV complaint diary."""
+        incident_mgr.process_new_detections()
+        count = request.args.get("count", 1000, type=int)
+        event_type = request.args.get("event_type", None, type=str)
+        review_status = request.args.get("review_status", None, type=str)
+        date_from = request.args.get("date_from", None, type=str)
+        date_to = request.args.get("date_to", None, type=str)
+        rows = incident_mgr.get_recent_incidents(
+            count=count,
+            event_type=event_type,
+            review_status=review_status,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        csv_bytes = report_exporter.export_csv(rows)
+        return send_file(
+            io.BytesIO(csv_bytes),
+            mimetype="text/csv",
+            as_attachment=True,
+            download_name="sentinel_complaint_diary.csv",
+        )
+
+    @app.route("/api/export/incidents.pdf")
+    def api_export_incidents_pdf():
+        """Export incidents as a PDF complaint diary report."""
+        incident_mgr.process_new_detections()
+        count = request.args.get("count", 1000, type=int)
+        event_type = request.args.get("event_type", None, type=str)
+        review_status = request.args.get("review_status", None, type=str)
+        date_from = request.args.get("date_from", None, type=str)
+        date_to = request.args.get("date_to", None, type=str)
+        rows = incident_mgr.get_recent_incidents(
+            count=count,
+            event_type=event_type,
+            review_status=review_status,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        try:
+            pdf_bytes = report_exporter.export_pdf(
+                rows,
+                property_address=Config.PROPERTY_ADDRESS,
+                device_id=Config.RPI_MICROPHONE_DEVICE,
+            )
+        except ImportError:
+            return jsonify({"error": "reportlab is not installed. Run: pip install reportlab"}), 500
+        return send_file(
+            io.BytesIO(pdf_bytes),
+            mimetype="application/pdf",
+            as_attachment=True,
+            download_name="sentinel_complaint_diary.pdf",
+        )
 
     @app.route("/api/update", methods=["POST"])
     def api_update():
@@ -1162,6 +1219,10 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           <input type="checkbox" id="incident-qh-only" onchange="fetchIncidents()" style="accent-color:var(--accent);">
           <span style="color:var(--orange); font-weight:600;">&#9679;</span> QH violations only
         </label>
+        <input type="date" id="incident-date-from" title="From date" onchange="fetchIncidents()" style="background:var(--bg-dark); border:1px solid var(--border); color:var(--text); padding:4px 6px; border-radius:6px; font-size:0.75rem;">
+        <input type="date" id="incident-date-to" title="To date" onchange="fetchIncidents()" style="background:var(--bg-dark); border:1px solid var(--border); color:var(--text); padding:4px 6px; border-radius:6px; font-size:0.75rem;">
+        <button onclick="exportIncidents('csv')" style="background:var(--bg-dark); border:1px solid var(--border); color:var(--text); padding:4px 10px; border-radius:6px; font-size:0.75rem; cursor:pointer;" title="Export Report (CSV)">&#11015; CSV</button>
+        <button onclick="exportIncidents('pdf')" style="background:var(--bg-dark); border:1px solid var(--accent); color:var(--accent); padding:4px 10px; border-radius:6px; font-size:0.75rem; cursor:pointer; font-weight:600;" title="Export Report (PDF)">&#11015; PDF</button>
         <span class="log-count" id="incident-count"></span>
       </div>
     </div>
@@ -2050,16 +2111,30 @@ async function fetchDetections() {
   } catch (e) { console.error(e); }
 }
 
+function currentIncidentFilters() {
+  const eventType = document.getElementById('incident-event-type').value;
+  const reviewStatus = document.getElementById('incident-review-status').value;
+  const limit = document.getElementById('incident-limit').value;
+  const dateFrom = document.getElementById('incident-date-from').value;
+  const dateTo = document.getElementById('incident-date-to').value;
+  const params = new URLSearchParams({ count: limit });
+  if (eventType) params.set('event_type', eventType);
+  if (reviewStatus) params.set('review_status', reviewStatus);
+  if (dateFrom) params.set('date_from', dateFrom);
+  if (dateTo) params.set('date_to', dateTo);
+  return params;
+}
+
+function exportIncidents(format) {
+  const params = currentIncidentFilters();
+  params.set('count', '10000');
+  window.location.href = '/api/export/incidents.' + format + '?' + params.toString();
+}
+
 async function fetchIncidents() {
   try {
-    const eventType = document.getElementById('incident-event-type').value;
-    const reviewStatus = document.getElementById('incident-review-status').value;
-    const limit = document.getElementById('incident-limit').value;
     const qhOnly = document.getElementById('incident-qh-only').checked;
-    const params = new URLSearchParams({ count: limit });
-    if (eventType) params.set('event_type', eventType);
-    if (reviewStatus) params.set('review_status', reviewStatus);
-
+    const params = currentIncidentFilters();
     const r = await fetch('/api/incidents?' + params.toString());
     let rows = await r.json();
     if (qhOnly) rows = rows.filter(inc => inc.quiet_hours_violation);

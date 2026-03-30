@@ -2,3 +2,4 @@ numpy
 sounddevice
 flask
 ai-edge-litert
+reportlab

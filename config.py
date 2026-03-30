@@ -10,6 +10,9 @@ CONFIG_PATH = Path(__file__).parent / "config.json"
 class Config:
     """Configuration loaded from config.json with save support."""
 
+    # Property / deployment info
+    PROPERTY_ADDRESS = ""
+
     # Sound detection target
     SOUND_TYPE_NAME = "All sounds"
     SOUND_TYPE_INDICES = []
@@ -69,6 +72,7 @@ class Config:
     def save(cls):
         """Save current configuration back to config.json."""
         data = {
+            "property_address": cls.PROPERTY_ADDRESS,
             "sound_type_name": cls.SOUND_TYPE_NAME,
             "sound_type_indices": cls.SOUND_TYPE_INDICES,
             "record_sound_indices": cls.RECORD_SOUND_INDICES,
@@ -109,6 +113,7 @@ class Config:
     def to_dict(cls):
         """Return current config as a dict for API responses."""
         return {
+            "property_address": cls.PROPERTY_ADDRESS,
             "sound_type_name": cls.SOUND_TYPE_NAME,
             "sound_type_indices": cls.SOUND_TYPE_INDICES,
             "record_sound_indices": cls.RECORD_SOUND_INDICES,

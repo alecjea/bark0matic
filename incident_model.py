@@ -226,8 +226,14 @@ class IncidentManager:
         count: int = 50,
         event_type: str = None,
         review_status: str = None,
+        date_from: str = None,
+        date_to: str = None,
     ) -> list[dict]:
-        """Return recent incidents, newest first."""
+        """Return recent incidents, newest first.
+
+        date_from / date_to should be ISO date strings (YYYY-MM-DD or
+        YYYY-MM-DDTHH:MM:SS).  date_to is treated as end-of-day inclusive.
+        """
         clauses = []
         params = []
         if event_type and event_type in VALID_EVENT_TYPES:
@@ -236,6 +242,13 @@ class IncidentManager:
         if review_status and review_status in VALID_REVIEW_STATUSES:
             clauses.append("review_status = ?")
             params.append(review_status)
+        if date_from:
+            clauses.append("started_at >= ?")
+            params.append(date_from[:10])
+        if date_to:
+            # Treat date_to as inclusive end-of-day
+            params.append(date_to[:10] + "T23:59:59")
+            clauses.append("started_at <= ?")
 
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         with self._connect() as conn:
