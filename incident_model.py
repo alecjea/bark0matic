@@ -276,6 +276,77 @@ class IncidentManager:
             ).fetchone()
         return dict(row) if row else None
 
+    def get_cases(self) -> list[dict]:
+        """Return one summary row per distinct case_id, plus an 'unassigned' entry."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    case_id,
+                    device_id,
+                    COUNT(*) AS total_incidents,
+                    SUM(quiet_hours_violation) AS quiet_hours_violations,
+                    MIN(started_at) AS monitoring_start,
+                    MAX(ended_at) AS monitoring_end,
+                    CASE
+                        WHEN SUM(CASE WHEN review_status = 'pending' THEN 1 ELSE 0 END) > 0
+                        THEN 'pending'
+                        ELSE 'reviewed'
+                    END AS status
+                FROM incidents
+                WHERE case_id IS NOT NULL AND case_id != ''
+                GROUP BY case_id
+                ORDER BY monitoring_start DESC
+                """
+            ).fetchall()
+            unassigned = conn.execute(
+                "SELECT COUNT(*) FROM incidents WHERE case_id IS NULL OR case_id = ''"
+            ).fetchone()[0]
+        result = [dict(r) for r in rows]
+        if unassigned:
+            result.append({
+                "case_id": None,
+                "device_id": "",
+                "total_incidents": unassigned,
+                "quiet_hours_violations": 0,
+                "monitoring_start": None,
+                "monitoring_end": None,
+                "status": "pending",
+            })
+        return result
+
+    def get_case_incidents(self, case_id: str | None) -> list[dict]:
+        """Return all incidents for a case_id (None = unassigned), sorted chronologically."""
+        with self._connect() as conn:
+            if case_id is None:
+                rows = conn.execute(
+                    """
+                    SELECT incident_id, case_id, device_id, event_type,
+                           started_at, ended_at, duration_seconds,
+                           peak_db, average_db, confidence, severity_score,
+                           quiet_hours_violation, tenant_marked, review_status,
+                           detection_count
+                    FROM incidents
+                    WHERE case_id IS NULL OR case_id = ''
+                    ORDER BY started_at ASC
+                    """
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT incident_id, case_id, device_id, event_type,
+                           started_at, ended_at, duration_seconds,
+                           peak_db, average_db, confidence, severity_score,
+                           quiet_hours_violation, tenant_marked, review_status,
+                           detection_count
+                    FROM incidents
+                    WHERE case_id = ?
+                    ORDER BY started_at ASC
+                    """,
+                    (case_id,),
+                ).fetchall()
+        return [dict(r) for r in rows]
+
     def update_incident(
         self,
         incident_id: str,

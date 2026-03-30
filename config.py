@@ -48,6 +48,11 @@ class Config:
     # Web
     WEB_PORT = 8080
 
+    # Officer portal auth
+    OFFICER_USERNAME = "officer"
+    OFFICER_PASSWORD_HASH = ""   # werkzeug pbkdf2 hash; empty = use default "sentinel"
+    FLASK_SECRET_KEY = ""        # generated on first run if empty
+
     @classmethod
     def load(cls):
         """Load configuration from config.json."""
@@ -93,6 +98,9 @@ class Config:
             "quiet_hours_weekend": cls.QUIET_HOURS_WEEKEND,
             "log_db_path": cls.LOG_DB_PATH,
             "web_port": cls.WEB_PORT,
+            "officer_username": cls.OFFICER_USERNAME,
+            "officer_password_hash": cls.OFFICER_PASSWORD_HASH,
+            "flask_secret_key": cls.FLASK_SECRET_KEY,
         }
         try:
             with open(CONFIG_PATH, "w") as f:

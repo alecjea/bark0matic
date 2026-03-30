@@ -1,9 +1,12 @@
 """Flask web interface for bark0matic."""
 import io
 import os
+import secrets
 import subprocess
 from datetime import datetime, timedelta
-from flask import Flask, jsonify, request, send_file, render_template_string
+from functools import wraps
+from flask import Flask, jsonify, request, send_file, render_template_string, session, redirect, url_for
+from werkzeug.security import generate_password_hash, check_password_hash
 from config import Config
 from incident_model import IncidentManager
 import report_exporter
@@ -52,8 +55,34 @@ def create_app(sound_detector):
     global detector
     detector = sound_detector
 
+    # Ensure a persistent secret key exists for Flask sessions
+    if not Config.FLASK_SECRET_KEY:
+        Config.FLASK_SECRET_KEY = secrets.token_hex(32)
+        Config.save()
+
     app = Flask(__name__)
+    app.secret_key = Config.FLASK_SECRET_KEY
     incident_mgr = IncidentManager(Config.LOG_DB_PATH)
+
+    # ------------------------------------------------------------------
+    # Officer portal auth helpers
+    # ------------------------------------------------------------------
+
+    def _check_officer_password(username: str, password: str) -> bool:
+        if username != Config.OFFICER_USERNAME:
+            return False
+        if Config.OFFICER_PASSWORD_HASH:
+            return check_password_hash(Config.OFFICER_PASSWORD_HASH, password)
+        # Default password "sentinel" if no hash configured
+        return password == "sentinel"
+
+    def require_officer(f):
+        @wraps(f)
+        def decorated(*args, **kwargs):
+            if not session.get("officer_logged_in"):
+                return redirect(url_for("portal_login", next=request.path))
+            return f(*args, **kwargs)
+        return decorated
 
     @app.route("/")
     def dashboard():
@@ -459,6 +488,121 @@ def create_app(sound_detector):
             detector.reload_config()
             return jsonify({"status": "ok", "device": device})
         return jsonify({"status": "error", "message": "No device specified"}), 400
+
+    # ------------------------------------------------------------------
+    # Officer portal
+    # ------------------------------------------------------------------
+
+    @app.route("/portal/login", methods=["GET", "POST"])
+    def portal_login():
+        error = None
+        if request.method == "POST":
+            username = request.form.get("username", "")
+            password = request.form.get("password", "")
+            if _check_officer_password(username, password):
+                session["officer_logged_in"] = True
+                next_url = request.args.get("next") or url_for("portal_cases")
+                return redirect(next_url)
+            error = "Invalid username or password."
+        return render_template_string(PORTAL_LOGIN_HTML, error=error)
+
+    @app.route("/portal/logout", methods=["POST"])
+    def portal_logout():
+        session.pop("officer_logged_in", None)
+        return redirect(url_for("portal_login"))
+
+    @app.route("/portal")
+    @require_officer
+    def portal_cases():
+        incident_mgr.process_new_detections()
+        cases = incident_mgr.get_cases()
+        return render_template_string(
+            PORTAL_CASES_HTML,
+            cases=cases,
+            property_address=Config.PROPERTY_ADDRESS or "Unknown property",
+        )
+
+    @app.route("/portal/case/<case_id>")
+    @require_officer
+    def portal_case_detail(case_id):
+        incident_mgr.process_new_detections()
+        actual_case_id = None if case_id == "unassigned" else case_id
+        incidents = incident_mgr.get_case_incidents(actual_case_id)
+
+        # Aggregate stats
+        total = len(incidents)
+        qh_violations = sum(1 for i in incidents if i.get("quiet_hours_violation"))
+        qh_pct = round(qh_violations / total * 100) if total else 0
+        by_type: dict = {}
+        for inc in incidents:
+            et = inc.get("event_type", "unknown")
+            by_type[et] = by_type.get(et, 0) + 1
+
+        # Hour-of-day heatmap data (0-23)
+        hour_counts = [0] * 24
+        dow_counts = [0] * 7  # Monday=0
+        for inc in incidents:
+            ts = inc.get("started_at", "")
+            try:
+                dt = datetime.fromisoformat(ts)
+                hour_counts[dt.hour] += 1
+                dow_counts[dt.weekday()] += 1
+            except Exception:
+                pass
+
+        return render_template_string(
+            PORTAL_CASE_HTML,
+            case_id=case_id,
+            actual_case_id=actual_case_id,
+            incidents=incidents,
+            total=total,
+            qh_violations=qh_violations,
+            qh_pct=qh_pct,
+            by_type=by_type,
+            hour_counts=hour_counts,
+            dow_counts=dow_counts,
+            property_address=Config.PROPERTY_ADDRESS or "Unknown property",
+        )
+
+    @app.route("/portal/case/<case_id>/report.pdf")
+    @require_officer
+    def portal_case_report_pdf(case_id):
+        incident_mgr.process_new_detections()
+        actual_case_id = None if case_id == "unassigned" else case_id
+        incidents = incident_mgr.get_case_incidents(actual_case_id)
+        try:
+            pdf_bytes = report_exporter.export_pdf(
+                incidents,
+                property_address=Config.PROPERTY_ADDRESS,
+                device_id=Config.RPI_MICROPHONE_DEVICE,
+            )
+        except ImportError:
+            return "reportlab is not installed. Run: pip install reportlab", 500
+        return send_file(
+            io.BytesIO(pdf_bytes),
+            mimetype="application/pdf",
+            as_attachment=True,
+            download_name=f"sentinel_case_{case_id}.pdf",
+        )
+
+    @app.route("/portal/settings", methods=["GET", "POST"])
+    @require_officer
+    def portal_settings():
+        message = None
+        if request.method == "POST":
+            new_username = request.form.get("username", "").strip()
+            new_password = request.form.get("password", "").strip()
+            if new_username:
+                Config.OFFICER_USERNAME = new_username
+            if new_password:
+                Config.OFFICER_PASSWORD_HASH = generate_password_hash(new_password)
+            Config.save()
+            message = "Settings saved."
+        return render_template_string(
+            PORTAL_SETTINGS_HTML,
+            username=Config.OFFICER_USERNAME,
+            message=message,
+        )
 
     return app
 
@@ -2216,5 +2360,395 @@ setInterval(fetchStatus, 3000);
 setInterval(fetchDetections, 5000);
 setInterval(fetchIncidents, 15000);
 </script>
+</body>
+</html>"""
+
+# ---------------------------------------------------------------------------
+# Officer portal HTML templates
+# ---------------------------------------------------------------------------
+
+PORTAL_LOGIN_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sentinel — Officer Login</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0b1120;color:#e2e8f0;font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh}
+  .card{background:#151d2e;border:1px solid #1e2d45;border-radius:12px;padding:2rem;width:100%;max-width:380px}
+  h1{font-size:1.3rem;font-weight:700;margin-bottom:.25rem;color:#f1f5f9}
+  .sub{color:#64748b;font-size:.85rem;margin-bottom:1.5rem}
+  label{display:block;font-size:.8rem;color:#94a3b8;margin-bottom:.35rem}
+  input{width:100%;background:#0b1120;border:1px solid #1e2d45;border-radius:6px;color:#e2e8f0;padding:.6rem .75rem;font-size:.9rem;outline:none}
+  input:focus{border-color:#38bdf8}
+  .field{margin-bottom:1rem}
+  .btn{width:100%;background:#0ea5e9;color:#fff;border:none;border-radius:6px;padding:.7rem;font-size:.95rem;font-weight:600;cursor:pointer;margin-top:.5rem}
+  .btn:hover{background:#0284c7}
+  .error{background:#7f1d1d;border:1px solid #ef4444;border-radius:6px;padding:.6rem .75rem;font-size:.85rem;color:#fca5a5;margin-bottom:1rem}
+  .badge{display:inline-block;background:#0ea5e920;color:#38bdf8;border-radius:4px;padding:.15rem .5rem;font-size:.75rem;font-weight:600;margin-bottom:1rem}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="badge">COUNCIL OFFICER PORTAL</div>
+  <h1>Sentinel</h1>
+  <div class="sub">Sign in to review complaint cases</div>
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  <form method="post">
+    <div class="field">
+      <label>Username</label>
+      <input type="text" name="username" autocomplete="username" required autofocus>
+    </div>
+    <div class="field">
+      <label>Password</label>
+      <input type="password" name="password" autocomplete="current-password" required>
+    </div>
+    <button class="btn" type="submit">Sign in</button>
+  </form>
+</div>
+</body>
+</html>"""
+
+
+PORTAL_CASES_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sentinel — Case List</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0b1120;color:#e2e8f0;font-family:system-ui,sans-serif;padding:1.5rem}
+  header{display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem;gap:1rem;flex-wrap:wrap}
+  h1{font-size:1.2rem;font-weight:700}
+  .sub{color:#64748b;font-size:.85rem}
+  .badge{display:inline-block;background:#0ea5e920;color:#38bdf8;border-radius:4px;padding:.15rem .5rem;font-size:.75rem;font-weight:600;margin-right:.5rem}
+  .actions{display:flex;gap:.5rem;align-items:center}
+  a.btn-sm{background:#1e2d45;color:#94a3b8;border-radius:6px;padding:.4rem .8rem;font-size:.8rem;text-decoration:none}
+  a.btn-sm:hover{background:#263548;color:#e2e8f0}
+  form.logout button{background:transparent;color:#64748b;border:1px solid #1e2d45;border-radius:6px;padding:.4rem .8rem;font-size:.8rem;cursor:pointer}
+  form.logout button:hover{color:#e2e8f0;border-color:#94a3b8}
+  table{width:100%;border-collapse:collapse;font-size:.85rem}
+  th{text-align:left;color:#64748b;font-weight:500;padding:.6rem .75rem;border-bottom:1px solid #1e2d45;white-space:nowrap}
+  td{padding:.65rem .75rem;border-bottom:1px solid #1a2540;vertical-align:middle}
+  tr:hover td{background:#111827}
+  a.case-link{color:#38bdf8;text-decoration:none;font-weight:600}
+  a.case-link:hover{text-decoration:underline}
+  .pill{display:inline-block;border-radius:999px;padding:.2rem .6rem;font-size:.75rem;font-weight:600}
+  .pill-pending{background:#78350f40;color:#fbbf24}
+  .pill-reviewed{background:#14532d40;color:#4ade80}
+  .empty{color:#475569;font-size:.9rem;padding:2rem 0}
+  .card{background:#151d2e;border:1px solid #1e2d45;border-radius:10px;overflow:hidden}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <span class="badge">OFFICER PORTAL</span>
+    <h1>Case List</h1>
+    <div class="sub">{{ property_address }}</div>
+  </div>
+  <div class="actions">
+    <a class="btn-sm" href="{{ url_for('portal_settings') }}">Settings</a>
+    <form class="logout" method="post" action="{{ url_for('portal_logout') }}">
+      <button type="submit">Sign out</button>
+    </form>
+  </div>
+</header>
+<div class="card">
+{% if cases %}
+<table>
+  <thead>
+    <tr>
+      <th>Case ID</th>
+      <th>Device</th>
+      <th>Monitoring start</th>
+      <th>Monitoring end</th>
+      <th>Incidents</th>
+      <th>Quiet hours violations</th>
+      <th>Status</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for c in cases %}
+    <tr>
+      <td>
+        {% if c.case_id %}
+          <a class="case-link" href="{{ url_for('portal_case_detail', case_id=c.case_id) }}">{{ c.case_id }}</a>
+        {% else %}
+          <a class="case-link" href="{{ url_for('portal_case_detail', case_id='unassigned') }}">— Unassigned —</a>
+        {% endif %}
+      </td>
+      <td>{{ c.device_id or '—' }}</td>
+      <td>{{ c.monitoring_start[:16] if c.monitoring_start else '—' }}</td>
+      <td>{{ c.monitoring_end[:16] if c.monitoring_end else '—' }}</td>
+      <td>{{ c.total_incidents }}</td>
+      <td>{{ c.quiet_hours_violations }}</td>
+      <td>
+        <span class="pill pill-{{ c.status }}">{{ c.status }}</span>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+  <div class="empty" style="padding:2rem 1rem">No cases found. Incidents must have a case_id assigned to appear here.</div>
+{% endif %}
+</div>
+</body>
+</html>"""
+
+
+PORTAL_CASE_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sentinel — Case {{ case_id }}</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0b1120;color:#e2e8f0;font-family:system-ui,sans-serif;padding:1.5rem}
+  header{display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem;gap:1rem;flex-wrap:wrap}
+  h1{font-size:1.2rem;font-weight:700}
+  .sub{color:#64748b;font-size:.85rem}
+  .badge{display:inline-block;background:#0ea5e920;color:#38bdf8;border-radius:4px;padding:.15rem .5rem;font-size:.75rem;font-weight:600;margin-right:.5rem}
+  .actions{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
+  a.btn{background:#0ea5e9;color:#fff;border-radius:6px;padding:.5rem 1rem;font-size:.85rem;font-weight:600;text-decoration:none}
+  a.btn:hover{background:#0284c7}
+  a.btn-sm{background:#1e2d45;color:#94a3b8;border-radius:6px;padding:.4rem .8rem;font-size:.8rem;text-decoration:none}
+  a.btn-sm:hover{background:#263548;color:#e2e8f0}
+  form.logout button{background:transparent;color:#64748b;border:1px solid #1e2d45;border-radius:6px;padding:.4rem .8rem;font-size:.8rem;cursor:pointer}
+  form.logout button:hover{color:#e2e8f0;border-color:#94a3b8}
+  .stats-row{display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1.5rem}
+  .stat{background:#151d2e;border:1px solid #1e2d45;border-radius:10px;padding:1rem 1.25rem;flex:1;min-width:140px}
+  .stat-val{font-size:1.6rem;font-weight:700;color:#f1f5f9}
+  .stat-lbl{font-size:.75rem;color:#64748b;margin-top:.15rem}
+  .card{background:#151d2e;border:1px solid #1e2d45;border-radius:10px;overflow:hidden;margin-bottom:1.5rem}
+  .card-title{padding:.75rem 1rem;border-bottom:1px solid #1e2d45;font-size:.85rem;font-weight:600;color:#94a3b8}
+  table{width:100%;border-collapse:collapse;font-size:.82rem}
+  th{text-align:left;color:#64748b;font-weight:500;padding:.55rem .75rem;border-bottom:1px solid #1e2d45;white-space:nowrap}
+  td{padding:.6rem .75rem;border-bottom:1px solid #1a2540;vertical-align:middle}
+  tr:hover td{background:#111827}
+  .pill{display:inline-block;border-radius:999px;padding:.2rem .55rem;font-size:.72rem;font-weight:600}
+  .pill-pending{background:#78350f40;color:#fbbf24}
+  .pill-reviewed{background:#14532d40;color:#4ade80}
+  .pill-dismissed{background:#1e293b;color:#64748b}
+  select.status-sel{background:#0b1120;color:#e2e8f0;border:1px solid #1e2d45;border-radius:4px;padding:.2rem .4rem;font-size:.8rem;cursor:pointer}
+  .heatmap{display:flex;flex-direction:column;gap:.5rem;padding:1rem}
+  .heatmap-row{display:flex;align-items:center;gap:.4rem}
+  .heatmap-lbl{font-size:.72rem;color:#64748b;width:2.5rem;text-align:right;flex-shrink:0}
+  .heatmap-bars{display:flex;gap:2px;flex:1}
+  .heatmap-bar{flex:1;border-radius:2px;min-height:18px;transition:opacity .15s}
+  .type-row{display:flex;justify-content:space-between;padding:.5rem 1rem;font-size:.82rem;border-bottom:1px solid #1a2540}
+  .type-row:last-child{border-bottom:none}
+  .severity-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:.4rem;vertical-align:middle}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <span class="badge">OFFICER PORTAL</span>
+    <h1>Case: {{ case_id }}</h1>
+    <div class="sub">{{ property_address }}</div>
+  </div>
+  <div class="actions">
+    {% if total > 0 %}
+    <a class="btn" href="{{ url_for('portal_case_report_pdf', case_id=case_id) }}">Generate Case Report (PDF)</a>
+    {% endif %}
+    <a class="btn-sm" href="{{ url_for('portal_cases') }}">← All cases</a>
+    <form class="logout" method="post" action="{{ url_for('portal_logout') }}">
+      <button type="submit">Sign out</button>
+    </form>
+  </div>
+</header>
+
+<!-- Stats row -->
+<div class="stats-row">
+  <div class="stat"><div class="stat-val">{{ total }}</div><div class="stat-lbl">Total incidents</div></div>
+  <div class="stat"><div class="stat-val">{{ qh_violations }}</div><div class="stat-lbl">Quiet hours violations</div></div>
+  <div class="stat"><div class="stat-val">{{ qh_pct }}%</div><div class="stat-lbl">During quiet hours</div></div>
+  <div class="stat"><div class="stat-val">{{ by_type|length }}</div><div class="stat-lbl">Event types</div></div>
+</div>
+
+<div style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-bottom:1.5rem">
+  <!-- Incident type breakdown -->
+  <div class="card" style="flex:1;min-width:260px">
+    <div class="card-title">Incident breakdown by type</div>
+    {% for et, cnt in by_type.items() %}
+    <div class="type-row">
+      <span>{{ et.replace('_',' ') }}</span>
+      <strong>{{ cnt }}</strong>
+    </div>
+    {% else %}
+    <div class="type-row" style="color:#475569">No incidents</div>
+    {% endfor %}
+  </div>
+
+  <!-- Hour-of-day heatmap -->
+  <div class="card" style="flex:2;min-width:300px">
+    <div class="card-title">Incidents by hour of day</div>
+    <div class="heatmap">
+      {% set max_h = (hour_counts | max) if hour_counts else 1 %}
+      {% set max_h = max_h if max_h > 0 else 1 %}
+      <div class="heatmap-row">
+        <div class="heatmap-lbl"></div>
+        <div class="heatmap-bars">
+          {% for h in range(24) %}
+          {% set intensity = (hour_counts[h] / max_h) %}
+          <div class="heatmap-bar"
+               title="{{ hour_counts[h] }} incident(s) at {{ '%02d:00' % h }}"
+               style="background: rgba(14,165,233,{{ 0.1 + intensity * 0.9 }});"></div>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="heatmap-row">
+        <div class="heatmap-lbl"></div>
+        <div class="heatmap-bars" style="gap:2px">
+          {% for h in [0,3,6,9,12,15,18,21] %}
+          <div style="flex:3;font-size:.65rem;color:#475569;text-align:left">{{ '%02d'%h }}</div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Day-of-week heatmap -->
+  <div class="card" style="flex:1;min-width:220px">
+    <div class="card-title">Incidents by day of week</div>
+    <div class="heatmap">
+      {% set max_d = (dow_counts | max) if dow_counts else 1 %}
+      {% set max_d = max_d if max_d > 0 else 1 %}
+      {% set dow_labels = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'] %}
+      {% for d in range(7) %}
+      {% set intensity = (dow_counts[d] / max_d) %}
+      <div class="heatmap-row">
+        <div class="heatmap-lbl">{{ dow_labels[d] }}</div>
+        <div class="heatmap-bars">
+          <div class="heatmap-bar"
+               title="{{ dow_counts[d] }} incident(s) on {{ dow_labels[d] }}"
+               style="background:rgba(14,165,233,{{ 0.1 + intensity * 0.9 }});max-width:none;"></div>
+        </div>
+        <div style="font-size:.72rem;color:#64748b;padding-left:.4rem;width:1.5rem">{{ dow_counts[d] }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<!-- Incident timeline -->
+<div class="card">
+  <div class="card-title">Incident timeline ({{ total }} total)</div>
+  {% if incidents %}
+  <table>
+    <thead>
+      <tr>
+        <th>Started</th>
+        <th>Type</th>
+        <th>Duration</th>
+        <th>Peak dB</th>
+        <th>Severity</th>
+        <th>Quiet hours</th>
+        <th>Detections</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for inc in incidents %}
+      <tr>
+        <td>{{ inc.started_at[:16] }}</td>
+        <td>{{ inc.event_type.replace('_',' ') }}</td>
+        <td>{{ '%.0fs' % inc.duration_seconds }}</td>
+        <td>{{ '%.1f' % inc.peak_db }}</td>
+        <td>
+          {% set sev = inc.severity_score %}
+          {% if sev >= 0.7 %}
+            <span class="severity-dot" style="background:#ef4444"></span>{{ '%.0f%%' % (sev*100) }}
+          {% elif sev >= 0.4 %}
+            <span class="severity-dot" style="background:#f59e0b"></span>{{ '%.0f%%' % (sev*100) }}
+          {% else %}
+            <span class="severity-dot" style="background:#22c55e"></span>{{ '%.0f%%' % (sev*100) }}
+          {% endif %}
+        </td>
+        <td>{{ '✓' if inc.quiet_hours_violation else '' }}</td>
+        <td>{{ inc.detection_count }}</td>
+        <td>
+          <select class="status-sel" data-id="{{ inc.incident_id }}" onchange="updateStatus(this)">
+            <option value="pending" {% if inc.review_status == 'pending' %}selected{% endif %}>Pending</option>
+            <option value="reviewed" {% if inc.review_status == 'reviewed' %}selected{% endif %}>Reviewed</option>
+            <option value="dismissed" {% if inc.review_status == 'dismissed' %}selected{% endif %}>Dismissed</option>
+          </select>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div style="padding:1.5rem;color:#475569;font-size:.9rem">No incidents found for this case.</div>
+  {% endif %}
+</div>
+
+<script>
+function updateStatus(sel) {
+  const id = sel.dataset.id;
+  const status = sel.value;
+  fetch('/api/incidents/' + id, {
+    method: 'PATCH',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({review_status: status})
+  }).then(r => {
+    if (!r.ok) { alert('Failed to update status'); sel.value = sel.dataset.prev; }
+    else { sel.dataset.prev = status; }
+  });
+}
+document.querySelectorAll('.status-sel').forEach(s => s.dataset.prev = s.value);
+</script>
+</body>
+</html>"""
+
+
+PORTAL_SETTINGS_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sentinel — Portal Settings</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0b1120;color:#e2e8f0;font-family:system-ui,sans-serif;padding:1.5rem}
+  header{display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem}
+  h1{font-size:1.2rem;font-weight:700}
+  .badge{display:inline-block;background:#0ea5e920;color:#38bdf8;border-radius:4px;padding:.15rem .5rem;font-size:.75rem;font-weight:600;margin-right:.5rem}
+  a.btn-sm{background:#1e2d45;color:#94a3b8;border-radius:6px;padding:.4rem .8rem;font-size:.8rem;text-decoration:none}
+  a.btn-sm:hover{background:#263548;color:#e2e8f0}
+  .card{background:#151d2e;border:1px solid #1e2d45;border-radius:10px;padding:1.5rem;max-width:420px}
+  label{display:block;font-size:.8rem;color:#94a3b8;margin-bottom:.35rem}
+  input{width:100%;background:#0b1120;border:1px solid #1e2d45;border-radius:6px;color:#e2e8f0;padding:.6rem .75rem;font-size:.9rem;outline:none;margin-bottom:1rem}
+  input:focus{border-color:#38bdf8}
+  .btn{background:#0ea5e9;color:#fff;border:none;border-radius:6px;padding:.6rem 1.25rem;font-size:.9rem;font-weight:600;cursor:pointer}
+  .btn:hover{background:#0284c7}
+  .msg{background:#14532d;border:1px solid #4ade80;border-radius:6px;padding:.6rem .75rem;font-size:.85rem;color:#4ade80;margin-bottom:1rem}
+  .hint{font-size:.75rem;color:#475569;margin-top:-.75rem;margin-bottom:1rem}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <span class="badge">OFFICER PORTAL</span>
+    <h1>Settings</h1>
+  </div>
+  <a class="btn-sm" href="{{ url_for('portal_cases') }}">← Cases</a>
+</header>
+<div class="card">
+  {% if message %}<div class="msg">{{ message }}</div>{% endif %}
+  <form method="post">
+    <label>Officer username</label>
+    <input type="text" name="username" value="{{ username }}" autocomplete="username">
+    <label>New password</label>
+    <input type="password" name="password" placeholder="Leave blank to keep current" autocomplete="new-password">
+    <div class="hint">Default password is "sentinel" if none has been set.</div>
+    <button class="btn" type="submit">Save</button>
+  </form>
+</div>
 </body>
 </html>"""
