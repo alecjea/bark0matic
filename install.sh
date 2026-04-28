@@ -122,9 +122,29 @@ echo -e "${GREEN}✓ YAMNet model files ready${NC}"
 echo ""
 
 # ────────────────────────────────────────────────────────────
-# Step 3: Install systemd service
+# Step 3: Set USB microphone gain to max
 # ────────────────────────────────────────────────────────────
-echo -e "${YELLOW}[3/3] Installing systemd service...${NC}"
+echo -e "${YELLOW}[3/4] Configuring microphone gain...${NC}"
+USB_CARD=$(arecord -l 2>/dev/null | grep -i usb | grep -o 'card [0-9]*' | grep -o '[0-9]*' | head -1)
+if [ -n "$USB_CARD" ]; then
+  MIC_NUMID=$(amixer -c "$USB_CARD" contents 2>/dev/null | grep -B2 'Mic Capture Volume' | grep -o 'numid=[0-9]*' | grep -o '[0-9]*')
+  if [ -n "$MIC_NUMID" ]; then
+    MAX_VAL=$(amixer -c "$USB_CARD" contents 2>/dev/null | grep -A4 'Mic Capture Volume' | grep -o 'max=[0-9]*' | grep -o '[0-9]*')
+    amixer -c "$USB_CARD" cset numid="$MIC_NUMID" "${MAX_VAL:-16}" > /dev/null 2>&1
+    sudo alsactl store
+    echo -e "${GREEN}✓ USB mic (card $USB_CARD) gain set to max${NC}"
+  else
+    echo -e "${GREEN}✓ No gain control found on USB mic, skipping${NC}"
+  fi
+else
+  echo -e "${GREEN}✓ No USB mic detected, skipping${NC}"
+fi
+echo ""
+
+# ────────────────────────────────────────────────────────────
+# Step 4: Install systemd service
+# ────────────────────────────────────────────────────────────
+echo -e "${YELLOW}[4/4] Installing systemd service...${NC}"
 CURRENT_USER=$(whoami)
 sed "s|User=.*|User=$CURRENT_USER|;s|WorkingDirectory=.*|WorkingDirectory=$SCRIPT_DIR|;s|ExecStart=.*|ExecStart=$SCRIPT_DIR/venv/bin/python3 -u main.py|" \
   "$SERVICE_FILE" | sudo tee /etc/systemd/system/barkomatic.service > /dev/null
