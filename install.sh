@@ -62,9 +62,25 @@ if ! arecord -l 2>/dev/null | grep -qi 'seeed\|wm8960'; then
   echo ""
 fi
 
-# Update WorkingDirectory and User in the service file to match current setup
+# ────────────────────────────────────────────────────────────
+# Step 1: Set up Python venv and install dependencies
+# ────────────────────────────────────────────────────────────
+echo -e "${YELLOW}[1/2] Setting up Python environment...${NC}"
+if ! dpkg -s python3-venv &>/dev/null 2>&1; then
+  sudo apt-get install -y python3-venv -q
+fi
+python3 -m venv "$SCRIPT_DIR/venv"
+"$SCRIPT_DIR/venv/bin/pip" install -q --upgrade pip
+"$SCRIPT_DIR/venv/bin/pip" install -q -r "$SCRIPT_DIR/requirements.txt"
+echo -e "${GREEN}✓ Python environment ready${NC}"
+echo ""
+
+# ────────────────────────────────────────────────────────────
+# Step 2: Install systemd service
+# ────────────────────────────────────────────────────────────
+echo -e "${YELLOW}[2/2] Installing systemd service...${NC}"
 CURRENT_USER=$(whoami)
-sed "s|User=.*|User=$CURRENT_USER|;s|WorkingDirectory=.*|WorkingDirectory=$SCRIPT_DIR|" \
+sed "s|User=.*|User=$CURRENT_USER|;s|WorkingDirectory=.*|WorkingDirectory=$SCRIPT_DIR|;s|ExecStart=.*|ExecStart=$SCRIPT_DIR/venv/bin/python3 -u main.py|" \
   "$SERVICE_FILE" | sudo tee /etc/systemd/system/barkomatic.service > /dev/null
 
 sudo systemctl daemon-reload
