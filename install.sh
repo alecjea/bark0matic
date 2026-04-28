@@ -24,6 +24,10 @@ SERVICE_FILE="$SCRIPT_DIR/barkomatic.service"
 if [ ! -f "$SERVICE_FILE" ]; then
   INSTALL_DIR="$HOME/barkomatic"
   echo -e "${YELLOW}[0/2] Cloning Barkomatic repository to $INSTALL_DIR...${NC}"
+  if ! command -v git &>/dev/null; then
+    echo -e "${YELLOW}  git not found, installing...${NC}"
+    sudo apt-get install -y git -q
+  fi
   if [ -d "$INSTALL_DIR/.git" ]; then
     echo -e "${GREEN}✓ Repo already exists, pulling latest...${NC}"
     git -C "$INSTALL_DIR" pull origin master -q
