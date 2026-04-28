@@ -17,6 +17,7 @@ class Config:
     SOUND_TYPE_NAME = "All sounds"
     SOUND_TYPE_INDICES = []
     RECORD_SOUND_INDICES = [69, 70, 75]
+    RECORD_SOUND_NAMES = ["Dog", "Bark", "Howl"]  # resolved names, used for recording trigger
     LOCAL_TIMEZONE = "Australia/Melbourne"
 
     # Audio
@@ -81,6 +82,7 @@ class Config:
             "sound_type_name": cls.SOUND_TYPE_NAME,
             "sound_type_indices": cls.SOUND_TYPE_INDICES,
             "record_sound_indices": cls.RECORD_SOUND_INDICES,
+            "record_sound_names": cls.RECORD_SOUND_NAMES,
             "local_timezone": cls.LOCAL_TIMEZONE,
             "rpi_microphone_device": cls.RPI_MICROPHONE_DEVICE,
             "rpi_microphone_rate": cls.RPI_MICROPHONE_RATE,

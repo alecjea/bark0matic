@@ -183,6 +183,15 @@ def create_app(sound_detector):
                 if len(indices) == 10:
                     break
             Config.RECORD_SOUND_INDICES = indices
+            # Resolve indices to names for stable cross-version matching
+            if detector and detector.classifier.class_labels:
+                Config.RECORD_SOUND_NAMES = [
+                    detector.classifier.class_labels[i]
+                    for i in indices
+                    if i in detector.classifier.class_labels
+                ]
+            else:
+                Config.RECORD_SOUND_NAMES = []
 
         Config.save()
         detector.reload_config()
