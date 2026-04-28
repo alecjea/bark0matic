@@ -256,7 +256,10 @@ class SoundDetector:
                         if snapshot_filename:
                             print(f"[CAMERA] Saved snapshot: {snapshot_filename}")
 
+                    record_filter = set(Config.RECORD_SOUND_INDICES or [])
                     for match in matches:
+                        if record_filter and match["index"] not in record_filter:
+                            continue
                         self.logger.log_event(
                             sound_type=match["name"],
                             class_index=match["index"],
