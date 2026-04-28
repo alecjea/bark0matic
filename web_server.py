@@ -1,8 +1,10 @@
 """Flask web interface for bark0matic."""
+import csv
 import io
 import os
 import secrets
 import subprocess
+from pathlib import Path
 from datetime import datetime, timedelta
 from functools import wraps
 from flask import Flask, jsonify, request, send_file, render_template_string, session, redirect, url_for
@@ -13,6 +15,28 @@ import report_exporter
 
 # Will be set by main.py
 detector = None
+
+_SPEECH_KEYWORDS = (
+    "speech", "conversation", "narration", "monologue",
+    "babbling", "whispering", "whisper", "child speech", "synthetic speech",
+)
+
+
+def _load_sounds_from_csv():
+    """Load all non-speech YAMNet classes from the bundled class map CSV."""
+    csv_path = Path(__file__).parent / "models" / "yamnet_class_map.csv"
+    if not csv_path.exists():
+        return None
+    try:
+        sounds = []
+        with open(csv_path, newline="") as f:
+            for row in csv.DictReader(f):
+                name = row["display_name"]
+                if not any(kw in name.lower() for kw in _SPEECH_KEYWORDS):
+                    sounds.append({"index": int(row["index"]), "name": name})
+        return sounds or None
+    except Exception:
+        return None
 
 # Fallback categories when the full YAMNet class map is unavailable.
 SOUND_CATEGORIES = [
@@ -111,10 +135,11 @@ def create_app(sound_detector):
     def api_get_settings():
         data = Config.to_dict()
         available_sounds = detector.classifier.get_available_sounds() if detector else []
-        data["available_sounds"] = available_sounds or [
-            {"name": item["name"], "index": item["indices"][0]}
-            for item in SOUND_CATEGORIES
-        ]
+        data["available_sounds"] = (
+            available_sounds
+            or _load_sounds_from_csv()
+            or [{"index": item["indices"][0], "name": item["name"]} for item in SOUND_CATEGORIES]
+        )
         return jsonify(data)
 
     @app.route("/api/settings", methods=["POST"])

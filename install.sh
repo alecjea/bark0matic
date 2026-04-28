@@ -76,9 +76,40 @@ echo -e "${GREEN}✓ Python environment ready${NC}"
 echo ""
 
 # ────────────────────────────────────────────────────────────
-# Step 2: Install systemd service
+# Step 2: Download YAMNet model files
 # ────────────────────────────────────────────────────────────
-echo -e "${YELLOW}[2/2] Installing systemd service...${NC}"
+echo -e "${YELLOW}[2/3] Downloading YAMNet model files...${NC}"
+if ! command -v wget &>/dev/null; then
+  sudo apt-get install -y wget -q
+fi
+mkdir -p "$SCRIPT_DIR/models"
+
+YAMNET_CSV="$SCRIPT_DIR/models/yamnet_class_map.csv"
+YAMNET_MODEL="$SCRIPT_DIR/models/yamnet.tflite"
+
+if [ ! -f "$YAMNET_CSV" ]; then
+  wget -q -O "$YAMNET_CSV" \
+    "https://raw.githubusercontent.com/tensorflow/models/master/research/audioset/yamnet/yamnet_class_map.csv"
+fi
+
+if [ ! -f "$YAMNET_MODEL" ]; then
+  echo -e "${YELLOW}  Downloading YAMNet TFLite model (~3MB)...${NC}"
+  wget -q -L -O "$YAMNET_MODEL" \
+    "https://storage.googleapis.com/tfhub-lite-models/google/lite-model/yamnet/classification/tflite/1.tflite"
+fi
+
+# Update pinned SHA-256 hashes in sound_classifier.py to match downloaded files
+CSV_HASH=$(sha256sum "$YAMNET_CSV" | cut -d' ' -f1)
+MODEL_HASH=$(sha256sum "$YAMNET_MODEL" | cut -d' ' -f1)
+sed -i "s|YAMNET_MODEL_SHA256 .*=.*|YAMNET_MODEL_SHA256     = \"$MODEL_HASH\"|" "$SCRIPT_DIR/sound_classifier.py"
+sed -i "s|YAMNET_CLASS_MAP_SHA256 .*=.*|YAMNET_CLASS_MAP_SHA256 = \"$CSV_HASH\"|" "$SCRIPT_DIR/sound_classifier.py"
+echo -e "${GREEN}✓ YAMNet model files ready${NC}"
+echo ""
+
+# ────────────────────────────────────────────────────────────
+# Step 3: Install systemd service
+# ────────────────────────────────────────────────────────────
+echo -e "${YELLOW}[3/3] Installing systemd service...${NC}"
 CURRENT_USER=$(whoami)
 sed "s|User=.*|User=$CURRENT_USER|;s|WorkingDirectory=.*|WorkingDirectory=$SCRIPT_DIR|;s|ExecStart=.*|ExecStart=$SCRIPT_DIR/venv/bin/python3 -u main.py|" \
   "$SERVICE_FILE" | sudo tee /etc/systemd/system/barkomatic.service > /dev/null
