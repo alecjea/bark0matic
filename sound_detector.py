@@ -200,30 +200,13 @@ class SoundDetector:
         """Reload config values (called after web UI saves settings)."""
         Config.load()
         self.classifier.reload_config()
-        self._migrate_record_names()
         print("[INFO] Configuration reloaded")
-
-    def _migrate_record_names(self):
-        """Populate RECORD_SOUND_NAMES from current class map if empty but indices are set."""
-        if Config.RECORD_SOUND_NAMES or not Config.RECORD_SOUND_INDICES:
-            return
-        if not self.classifier.class_labels:
-            return
-        Config.RECORD_SOUND_NAMES = [
-            self.classifier.class_labels[i]
-            for i in Config.RECORD_SOUND_INDICES
-            if i in self.classifier.class_labels
-        ]
-        if Config.RECORD_SOUND_NAMES:
-            Config.save()
-            print(f"[INFO] Migrated record names: {Config.RECORD_SOUND_NAMES}")
 
     def _run_loop(self):
         """Main detection loop."""
         self.running = True
         self.start_time = datetime.now()
 
-        self._migrate_record_names()
         print("[INFO] Starting detection for: all sounds")
         print(f"[INFO] Listening on device: {Config.RPI_MICROPHONE_DEVICE}")
         print(f"[INFO] Threshold: {Config.BARK_DETECTION_THRESHOLD}")
@@ -254,12 +237,8 @@ class SoundDetector:
                     top_match = matches[0]
 
                     disk_stats = self._get_disk_stats()
-                    record_names = set(Config.RECORD_SOUND_NAMES or [])
                     record_indices = set(Config.RECORD_SOUND_INDICES or [])
-                    matched = (
-                        (record_names and top_match["name"] in record_names)
-                        or (not record_names and top_match["index"] in record_indices)
-                    )
+                    matched = top_match["index"] in record_indices
                     should_record = matched and not disk_stats["recording_blocked_low_disk"]
 
                     audio_filename = ""
