@@ -17,12 +17,15 @@ NC='\033[0m'
 echo -e "${BLUE}🐕 BARKOMATIC - Install Service${NC}"
 echo ""
 
-# When piped through curl | bash, BASH_SOURCE[0] is empty — clone the repo first
-INSTALL_DIR="/home/$(whoami)/barkomatic"
-if [ -z "${BASH_SOURCE[0]}" ] || [ "${BASH_SOURCE[0]}" = "bash" ]; then
-  echo -e "${YELLOW}[0/2] Cloning Barkomatic repository...${NC}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-/}")" 2>/dev/null && pwd || echo "$HOME")"
+SERVICE_FILE="$SCRIPT_DIR/barkomatic.service"
+
+# If service file isn't alongside this script (e.g. curl | bash), clone the repo first
+if [ ! -f "$SERVICE_FILE" ]; then
+  INSTALL_DIR="$HOME/barkomatic"
+  echo -e "${YELLOW}[0/2] Cloning Barkomatic repository to $INSTALL_DIR...${NC}"
   if [ -d "$INSTALL_DIR/.git" ]; then
-    echo -e "${GREEN}✓ Repo already exists at $INSTALL_DIR, pulling latest...${NC}"
+    echo -e "${GREEN}✓ Repo already exists, pulling latest...${NC}"
     git -C "$INSTALL_DIR" pull origin master -q
   else
     git clone https://github.com/alecjea/bark0matic.git "$INSTALL_DIR" -q
@@ -30,14 +33,6 @@ if [ -z "${BASH_SOURCE[0]}" ] || [ "${BASH_SOURCE[0]}" = "bash" ]; then
   fi
   echo ""
   exec bash "$INSTALL_DIR/install.sh"
-fi
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SERVICE_FILE="$SCRIPT_DIR/barkomatic.service"
-
-if [ ! -f "$SERVICE_FILE" ]; then
-  echo -e "${RED}✗ barkomatic.service not found in $SCRIPT_DIR${NC}"
-  exit 1
 fi
 
 # ────────────────────────────────────────────────────────────
