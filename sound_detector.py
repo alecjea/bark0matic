@@ -272,9 +272,12 @@ class SoundDetector:
                         shutil.move(wav_path, dest)
                         wav_path = None  # Don't delete below
                         print(f"[AUDIO] Saved clip: {audio_filename}")
-                        snapshot_filename = self.capture_recording_snapshot(stem)
-                        if snapshot_filename:
-                            print(f"[CAMERA] Saved snapshot: {snapshot_filename}")
+                        # Snapshot runs in background so it doesn't stall the detection loop
+                        threading.Thread(
+                            target=self.capture_recording_snapshot,
+                            args=(stem,),
+                            daemon=True,
+                        ).start()
 
                     for match in matches:
                         self.logger.log_event(
