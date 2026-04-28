@@ -92,10 +92,25 @@ if [ ! -f "$YAMNET_CSV" ]; then
     "https://raw.githubusercontent.com/tensorflow/models/master/research/audioset/yamnet/yamnet_class_map.csv"
 fi
 
-if [ ! -f "$YAMNET_MODEL" ]; then
+if [ ! -f "$YAMNET_MODEL" ] || [ ! -s "$YAMNET_MODEL" ]; then
+  rm -f "$YAMNET_MODEL"
   echo -e "${YELLOW}  Downloading YAMNet TFLite model (~3MB)...${NC}"
-  wget -q -L -O "$YAMNET_MODEL" \
-    "https://storage.googleapis.com/tfhub-lite-models/google/lite-model/yamnet/classification/tflite/1.tflite"
+  "$SCRIPT_DIR/venv/bin/python3" -c "
+import urllib.request, sys
+urls = [
+    'https://tfhub.dev/google/lite-model/yamnet/classification/tflite/1?lite-format=tflite',
+    'https://storage.googleapis.com/download.tensorflow.org/models/tflite/task_library/audio_classification/rpi/lite-model_yamnet_classification_tflite_1.tflite',
+]
+for url in urls:
+    try:
+        urllib.request.urlretrieve(url, sys.argv[1])
+        print('Downloaded from', url)
+        break
+    except Exception as e:
+        print('Failed:', url, e)
+else:
+    sys.exit(1)
+" "$YAMNET_MODEL"
 fi
 
 # Update pinned SHA-256 hashes in sound_classifier.py to match downloaded files
