@@ -17,6 +17,21 @@ NC='\033[0m'
 echo -e "${BLUE}🐕 BARKOMATIC - Install Service${NC}"
 echo ""
 
+# When piped through curl | bash, BASH_SOURCE[0] is empty — clone the repo first
+INSTALL_DIR="/home/$(whoami)/barkomatic"
+if [ -z "${BASH_SOURCE[0]}" ] || [ "${BASH_SOURCE[0]}" = "bash" ]; then
+  echo -e "${YELLOW}[0/2] Cloning Barkomatic repository...${NC}"
+  if [ -d "$INSTALL_DIR/.git" ]; then
+    echo -e "${GREEN}✓ Repo already exists at $INSTALL_DIR, pulling latest...${NC}"
+    git -C "$INSTALL_DIR" pull origin master -q
+  else
+    git clone https://github.com/alecjea/bark0matic.git "$INSTALL_DIR" -q
+    echo -e "${GREEN}✓ Cloned to $INSTALL_DIR${NC}"
+  fi
+  echo ""
+  exec bash "$INSTALL_DIR/install.sh"
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVICE_FILE="$SCRIPT_DIR/barkomatic.service"
 
