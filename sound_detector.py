@@ -238,7 +238,7 @@ class SoundDetector:
 
                     disk_stats = self._get_disk_stats()
                     record_indices = set(Config.RECORD_SOUND_INDICES or [])
-                    matched = top_match["index"] in record_indices
+                    matched = any(m["index"] in record_indices for m in matches)
                     should_record = matched and not disk_stats["recording_blocked_low_disk"]
 
                     audio_filename = ""
